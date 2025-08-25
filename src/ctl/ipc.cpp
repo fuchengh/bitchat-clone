@@ -1,6 +1,9 @@
 #include <cerrno>
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -29,7 +32,16 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
         return false;
     }
 
-    unlink(sock_path.c_str());  // ignore errors
+    // ensure parent directory exists (mkdir -p)
+    {
+        std::error_code       ec;
+        std::filesystem::path p(sock_path);
+        auto                  parent = p.parent_path();
+        if (!parent.empty())
+            std::filesystem::create_directories(parent, ec);
+    }
+
+    (void)::unlink(sock_path.c_str());  // ignore errors
 
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd == -1)
@@ -45,8 +57,13 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
     addr.sun_family = AF_UNIX;
     std::strncpy(addr.sun_path, sock_path.c_str(), sizeof(addr.sun_path) - 1);
     addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
-    addr.sun_len                             = static_cast<uint8_t>(SUN_LEN(&addr));
-    socklen_t addr_len                       = static_cast<socklen_t>(SUN_LEN(&addr));
+#ifdef __APPLE__
+    addr.sun_len       = static_cast<uint8_t>(SUN_LEN(&addr));
+    socklen_t addr_len = static_cast<socklen_t>(SUN_LEN(&addr));
+#else
+    socklen_t addr_len = static_cast<socklen_t>(offsetof(struct sockaddr_un, sun_path) +
+                                                std::strlen(addr.sun_path) + 1);
+#endif
 
     if (bind(fd, reinterpret_cast<sockaddr *>(&addr), addr_len) == -1)
     {
@@ -86,10 +103,14 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
         int aflags = fcntl(newfd, F_GETFD, 0);
         if (aflags != -1)
             fcntl(newfd, F_SETFD, aflags | FD_CLOEXEC);
+#ifdef __APPLE__
         int one = 1;
         setsockopt(newfd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
         std::string line;
         char        buf[256];
+        bool        ok = true;
+
         while (1)
         {
             ssize_t n = recv(newfd, buf, sizeof(buf), 0);
@@ -97,19 +118,24 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
             {
                 line.append(buf, static_cast<size_t>(n));
                 if (line.find('\n') != std::string::npos)
-                    break;  // got at least one full line
+                    break;
                 continue;
             }
             if (n == 0)
                 break;  // EOF
             if (n == -1 && errno == EINTR)
                 continue;
+
             int saved = errno;
             close(newfd);
             errno = saved;
             LOG_ERROR("recv() failed: %s", std::strerror(errno));
-            continue;  // keep server alive; accept next connection
+            ok = false;
+            break;  // abort this connection
         }
+
+        if (!ok)
+            continue;  // keep server alive; accept next connection
 
         // take first line only
         auto        pos   = line.find('\n');
@@ -124,7 +150,7 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
         close(newfd);
 
         if (first == "QUIT")
-            break;
+            break;  // graceful shutdown
     }
 
     close(fd);
@@ -150,24 +176,30 @@ bool send_line(const std::string &sock_path, const std::string &line)
         return false;
     }
 
-    // create socket
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd == -1)
     {
         LOG_ERROR("socket() failed: %s", std::strerror(errno));
         return false;
     }
+
     int fd_flags = fcntl(fd, F_GETFD, 0);
     if (fd_flags != -1)
         fcntl(fd, F_SETFD, fd_flags | FD_CLOEXEC);
     addr.sun_family = AF_UNIX;
     std::strncpy(addr.sun_path, sock_path.c_str(), sizeof(addr.sun_path) - 1);
     addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
-    addr.sun_len                             = static_cast<uint8_t>(SUN_LEN(&addr));
-    int one                                  = 1;
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-    // connect
+#ifdef __APPLE__
+    addr.sun_len       = static_cast<uint8_t>(SUN_LEN(&addr));
     socklen_t addr_len = static_cast<socklen_t>(SUN_LEN(&addr));
+    int       one      = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#else
+    socklen_t addr_len = static_cast<socklen_t>(offsetof(struct sockaddr_un, sun_path) +
+                                                std::strlen(addr.sun_path) + 1);
+#endif
+
+    // connect
     if (connect(fd, reinterpret_cast<sockaddr *>(&addr), addr_len) == -1)
     {
         int saved = errno;
@@ -183,7 +215,11 @@ bool send_line(const std::string &sock_path, const std::string &line)
     size_t      sent = 0;
     while (sent < len)
     {
+#ifdef __APPLE__
         ssize_t n = send(fd, buf + sent, len - sent, 0);
+#else
+        ssize_t n = send(fd, buf + sent, len - sent, MSG_NOSIGNAL);
+#endif
         if (n > 0)
         {
             sent += static_cast<size_t>(n);
