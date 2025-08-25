@@ -18,12 +18,12 @@ class ChatService
     void set_tail(bool on) { tail_ = on; }
 
   private:
-    transport::ITransport     &t_;
-    aead::PskAead             &aead_;
-    frag::Reassembler          rx_;
-    std::size_t                mtu_payload_{100};
-    std::atomic<std::uint32_t> next_msg_id_{1};
-    std::atomic<std::uint64_t> send_ctr_{0}, recv_ctr_{0};
+    [[maybe_unused]] transport::ITransport     &t_;
+    [[maybe_unused]] aead::PskAead             &aead_;
+    [[maybe_unused]] frag::Reassembler          rx_;
+    [[maybe_unused]] std::size_t                mtu_payload_{100};
+    [[maybe_unused]] std::atomic<std::uint32_t> next_msg_id_{1};
+    [[maybe_unused]] std::atomic<std::uint64_t> send_ctr_{0}, recv_ctr_{0};
     bool                       tail_{true};
 };
 
