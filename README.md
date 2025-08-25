@@ -11,7 +11,14 @@ cmake --build build -j
 
 ## CLI
 
-Binary: `build/bin/bitchatctl`
+Server `build/bin/bitcahtd`
+
+```bash
+Usage:
+  bitcahtd
+```
+
+Client `build/bin/bitchatctl`
 
 ```bash
 Usage:
@@ -23,20 +30,21 @@ Commands:
   quit
 ```
 
-## Quickstart (no daemon yet, using a fake server)
+## Quickstart
 
 ```bash
-# 1 Prepare directory (macOS typically doesn't have ~/.cache by default)
+# 1 Prepare cache location (required)
 mkdir -p ~/.cache/bitchat-clone
 
 # 2 Start a temporary listener (terminal A)
-socat -d -d UNIX-LISTEN:$HOME/.cache/bitchat-clone/ctl.sock,fork -
+./build/bin/bitcahtd
 
 # 3 Send a command (terminal B)
 ./build/bin/bitchatctl send "hello world"
-# > Listener should print: "SEND hello world\n"
+# Listener should print: "SEND hello world\n"
+./build/bin/bitchatctl quit
+# Listener should print: "QUIT\n"
 
 # TODO:
-./build/bin/bitchatctl tail on
-./build/bin/bitchatctl quit
+./build/bin/bitchatctl tail on/off
 ```

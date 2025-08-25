@@ -1,15 +1,17 @@
-#include <iostream>
-#include "app/chat_service.hpp"
-#include "crypto/psk_aead.hpp"
-#include "transport/itransport.hpp"
+#include <string>
+#include "ctl/ipc.hpp"
 #include "util/constants.hpp"
+#include "util/log.hpp"
 
-// NOTE: This is a stub main that doesn't wire real logic yet.
-
-int main(int argc, char **argv)
+static void on_line(const std::string &line)
 {
-    std::cout << "bitchatd (stub) — TODO: implement serve loop, transport, IPC\n";
-    (void)argc;
-    (void)argv;
-    return 0;
+    LOG_INFO("CMD: %s", line.c_str());
+}
+
+int main()
+{
+    bitchat::set_log_level(bitchat::Level::Info);
+    std::string sock = ipc::expand_user(std::string(constants::kCtlSock));
+    bool        ok   = ipc::start_server(sock, on_line);
+    return ok ? 0 : 1;
 }
