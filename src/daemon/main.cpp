@@ -1,3 +1,4 @@
+#include <atomic>
 #include <string>
 #include "ctl/ipc.hpp"
 #include "util/constants.hpp"

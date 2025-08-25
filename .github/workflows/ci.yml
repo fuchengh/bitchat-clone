@@ -17,15 +17,37 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
 
+    env:
+      CCACHE_DIR: ${{ runner.home }}/.ccache
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install ccache
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y ccache
+          else
+            brew install ccache
+          fi
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
 
       - name: Configure (CMake)
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBITCHAT_WERROR=ON \
             -DBITCHAT_WITH_BLUEZ=OFF
 
@@ -36,16 +58,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Start daemon in background
-          ./build/bin/bitchatd & echo $! > server.pid
-          # Give it a moment to bind the socket
+          # Ensure socket dir exists on macOS runners (usually present, but safe)
+          mkdir -p "$HOME/.cache/bitchat-clone"
+
+          # Start daemon in background; ensure cleanup on failure/exit
+          ./build/bin/bitchatd >daemon.log 2>&1 &
+          DAEMON_PID=$!
+          trap 'kill $DAEMON_PID 2>/dev/null || true' EXIT
+
+          # Give it a moment to bind
           sleep 0.5
-          # Send a message and then shut it down
+
+          # Send commands; all should return 0
           ./build/bin/bitchatctl send "ci hello"
           ./build/bin/bitchatctl tail on
           ./build/bin/bitchatctl quit
-          # Ensure daemon is not lingering
+
+          # Wait a bit and ensure daemon exited
           sleep 0.5
-          if [ -f server.pid ] && ps -p "$(cat server.pid)" > /dev/null 2>&1; then
-            kill "$(cat server.pid)" || true
+          if ps -p "$DAEMON_PID" > /dev/null 2>&1; then
+            echo "daemon still running!" >&2
+            exit 1
           fi
+
+      - name: Show ccache stats
+        run: ccache -s || true
