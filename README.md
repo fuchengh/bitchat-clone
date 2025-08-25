@@ -33,17 +33,14 @@ Commands:
 ## Quickstart
 
 ```bash
-# 1 Prepare cache location (required)
-mkdir -p ~/.cache/bitchat-clone
-
-# 2 Start a temporary listener (terminal A)
+# 1. Start a temporary listener (terminal A)
 ./build/bin/bitcahtd
 
-# 3 Send a command (terminal B)
+# 2. Send a command (terminal B)
 ./build/bin/bitchatctl send "hello world"
-# Listener should print: "SEND hello world\n"
+# >>> Listener should print: "SEND hello world\n"
 ./build/bin/bitchatctl quit
-# Listener should print: "QUIT\n"
+# >>> Listener should print: "QUIT\n"
 
 # TODO:
 ./build/bin/bitchatctl tail on/off
