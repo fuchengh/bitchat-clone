@@ -17,9 +17,6 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
 
-    env:
-      CCACHE_DIR: ${{ runner.home }}/.ccache
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,11 +30,15 @@ jobs:
             brew install ccache
           fi
 
+      # Set CCACHE_DIR using $GITHUB_ENV so later steps see the expanded HOME path
+      - name: Set CCACHE_DIR
+        run: echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+
       - name: Cache ccache
         uses: actions/cache@v4
         with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
           restore-keys: |
             ${{ runner.os }}-ccache-
 
@@ -58,23 +59,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Ensure socket dir exists on macOS runners (usually present, but safe)
-          mkdir -p "$HOME/.cache/bitchat-clone"
-
-          # Start daemon in background; ensure cleanup on failure/exit
           ./build/bin/bitchatd >daemon.log 2>&1 &
           DAEMON_PID=$!
           trap 'kill $DAEMON_PID 2>/dev/null || true' EXIT
-
-          # Give it a moment to bind
           sleep 0.5
-
-          # Send commands; all should return 0
           ./build/bin/bitchatctl send "ci hello"
           ./build/bin/bitchatctl tail on
           ./build/bin/bitchatctl quit
-
-          # Wait a bit and ensure daemon exited
           sleep 0.5
           if ps -p "$DAEMON_PID" > /dev/null 2>&1; then
             echo "daemon still running!" >&2
