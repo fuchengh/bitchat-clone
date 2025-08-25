@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (CMake)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBITCHAT_WERROR=ON \
+            -DBITCHAT_WITH_BLUEZ=OFF
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Smoke test (daemon + CLI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Start daemon in background
+          ./build/bin/bitchatd & echo $! > server.pid
+          # Give it a moment to bind the socket
+          sleep 0.5
+          # Send a message and then shut it down
+          ./build/bin/bitchatctl send "ci hello"
+          ./build/bin/bitchatctl tail on
+          ./build/bin/bitchatctl quit
+          # Ensure daemon is not lingering
+          sleep 0.5
+          if [ -f server.pid ] && ps -p "$(cat server.pid)" > /dev/null 2>&1; then
+            kill "$(cat server.pid)" || true
+          fi
