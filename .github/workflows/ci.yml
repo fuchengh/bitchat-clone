@@ -74,6 +74,7 @@ jobs:
             echo "daemon still running!" >&2
             exit 1
           fi
+          grep -q "\\[RECV\\] ci hello" daemon.log
 
       - name: Show ccache stats
         run: ccache -s || true
@@ -103,4 +104,4 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: print_stacktrace=1
         run: |
-          ctest --test-dir build --output-on-failure -E "CLI_EndToEnd"
+          ctest --test-dir build --output-on-failure

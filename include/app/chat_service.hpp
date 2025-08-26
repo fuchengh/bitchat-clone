@@ -12,13 +12,14 @@ class ChatService
   public:
     ChatService(transport::ITransport &t, aead::PskAead &aead, std::size_t mtu_payload);
 
+    bool start();
     bool send_text(std::string_view msg);
-    void on_frame(const transport::Frame &f);
+    void on_rx(const transport::Frame &f);
 
     void set_tail(bool on) { tail_ = on; }
 
   private:
-    [[maybe_unused]] transport::ITransport     &t_;
+    transport::ITransport                      &tx_;
     [[maybe_unused]] aead::PskAead             &aead_;
     [[maybe_unused]] frag::Reassembler          rx_;
     [[maybe_unused]] std::size_t                mtu_payload_{100};

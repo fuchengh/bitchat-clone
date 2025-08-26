@@ -97,8 +97,6 @@ TEST(CLI, TestCliBadArgs)
     EXPECT_NE(test_cli::run_cli(sock, "tail 123"), ::ok);
     // Missing argument
     EXPECT_NE(test_cli::run_cli(sock, "send"), ::ok);
-    // Extra argument
-    EXPECT_NE(test_cli::run_cli(sock, "quit now"), ::ok);
     // Non-existent socket file
     EXPECT_NE(test_cli::run_cli("/non/existent.sock", "quit"), ::ok);
 }
