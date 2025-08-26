@@ -15,9 +15,12 @@ ChatService::ChatService(transport::ITransport &t, aead::PskAead &aead, std::siz
 
 bool ChatService::start()
 {
-    //TODO: change role
-    return tx_.start(transport::Settings{.role = "loopback", .mtu_payload = 0},
-                     [this](const transport::Frame &f) { this->on_rx(f); });
+    //TODO: change role and mtu_payload
+    transport::Settings s{};
+    s.role        = "loopback";
+    s.mtu_payload = 0;
+
+    return tx_.start(s, [this](const transport::Frame &f) { this->on_rx(f); });
 }
 
 bool ChatService::send_text(std::string_view msg)
