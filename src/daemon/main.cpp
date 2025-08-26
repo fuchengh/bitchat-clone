@@ -4,6 +4,14 @@
 #include "util/constants.hpp"
 #include "util/log.hpp"
 
+#include "app/chat_service.hpp"
+#include "crypto/psk_aead.hpp"
+#include "transport/loopback_transport.hpp"
+
+static transport::LoopbackTransport g_tx;
+static aead::PskAead                g_aead;
+static app::ChatService             g_chat{g_tx, g_aead, /*mtu=*/100};
+
 static std::atomic<bool> g_tail_enabled{false};
 
 static void on_line(const std::string &line)
@@ -25,12 +33,20 @@ static void on_line(const std::string &line)
         LOG_INFO("TAIL Disabled");
         return;
     }
-    LOG_INFO("CMD: %s", line.c_str());
+    if (line.rfind("SEND ", 0) == 0)  // sending msg
+    {
+        g_chat.send_text(std::string_view{line}.substr(5));
+        return;
+    }
 }
 
 int main()
 {
     bitchat::set_log_level(bitchat::Level::Info);
+    // start chat service
+    g_chat.start();
+
+    // start daemon IPC server
     std::string sock = ipc::expand_user(std::string(constants::kCtlSock));
     bool        ok   = ipc::start_server(sock, on_line);
     return ok ? 0 : 1;
