@@ -11,7 +11,7 @@ cmake --build build -j
 
 ## CLI
 
-Server `build/bin/bitchatd`
+Daemon `build/bin/bitchatd`
 
 ```bash
 Usage:
@@ -33,14 +33,14 @@ Commands:
 ## Quickstart
 
 ```bash
-# 1. Start a temporary listener (terminal A)
+# 1. Start a temporary listener daemon (terminal A)
 ./build/bin/bitchatd
 
 # 2. Send a command (terminal B)
 ./build/bin/bitchatctl send "hello world"
-# >>> Listener should print: "SEND hello world\n"
+# -- Listener should print: "[RECV] hello world"
 ./build/bin/bitchatctl quit
-# >>> Listener should print: "QUIT\n"
+# -- Listener should print: "Received QUIT command, exiting..."
 
 # TODO:
 ./build/bin/bitchatctl tail on/off
