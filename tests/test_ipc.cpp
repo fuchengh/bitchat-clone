@@ -20,6 +20,16 @@ TEST(IPC, TestExpandUser)
         setenv("HOME", path, 1);
 }
 
+TEST(IPC, TestExpandUserNoHomeEnv)
+{
+    const char *path = std::getenv("HOME");
+    unsetenv("HOME");
+    EXPECT_EQ(ipc::expand_user("~"), "~");
+    EXPECT_EQ(ipc::expand_user("~/x"), "~/x");
+    if (path)
+        setenv("HOME", path, 1);
+}
+
 TEST(IPC, TestStartServerAndSendLine)
 {
     // temporary socket path
