@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <string_view>
 
 namespace bitchat
 {
@@ -27,7 +28,8 @@ inline void set_log_level(Level lv)
     global_level() = lv;
 }
 
-inline void set_log_level_by_name(std::string& name)
+// Allow callers to pass string literals or other non-owning strings.
+inline void set_log_level_by_name(std::string_view name)
 {
     if (name == "debug")
         set_log_level(Level::Debug);
