@@ -11,8 +11,10 @@
 #include <vector>
 
 #include "ctl/ipc.hpp"
+#include "util/exitcodes.hpp"
 
 using namespace std::chrono_literals;
+using namespace exitc;
 
 namespace test_cli
 {
@@ -82,4 +84,21 @@ TEST(CLI, TestCliFunctionalality)
 
     // start_server should have cleaned up the socket file
     EXPECT_FALSE(access(sock.c_str(), F_OK) == 0);
+}
+
+TEST(CLI, TestCliBadArgs)
+{
+    const auto sock = test_cli::temp_sock_path();
+    // No args
+    EXPECT_NE(test_cli::run_cli(sock, ""), ::ok);
+    // Invalid command
+    EXPECT_NE(test_cli::run_cli(sock, "invalid"), ::ok);
+    EXPECT_NE(test_cli::run_cli(sock, "invalid arguments 1 2 3"), ::ok);
+    EXPECT_NE(test_cli::run_cli(sock, "tail 123"), ::ok);
+    // Missing argument
+    EXPECT_NE(test_cli::run_cli(sock, "send"), ::ok);
+    // Extra argument
+    EXPECT_NE(test_cli::run_cli(sock, "quit now"), ::ok);
+    // Non-existent socket file
+    EXPECT_NE(test_cli::run_cli("/non/existent.sock", "quit"), ::ok);
 }
