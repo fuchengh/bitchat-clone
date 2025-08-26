@@ -61,3 +61,31 @@ target_link_libraries(bitchatd PRIVATE bitchat_transport bitchat_app bitchat_ctl
 # --- CLI
 add_executable(bitchatctl src/cli/main.cpp)
 target_link_libraries(bitchatctl PRIVATE bitchat_ctl bitchat_warnings)
+
+# --- Tests
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip
+)
+# For GTest on older CMake policies
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+add_executable(unit_tests
+  tests/test_ipc.cpp
+  tests/test_cli.cpp
+)
+target_include_directories(unit_tests PRIVATE include)
+target_link_libraries(unit_tests
+  PRIVATE
+    gtest_main
+    bitchat_ctl
+    bitchat_transport
+    bitchat_warnings
+)
+
+include(GoogleTest)
+gtest_discover_tests(unit_tests)
