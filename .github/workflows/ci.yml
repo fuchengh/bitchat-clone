@@ -55,6 +55,9 @@ jobs:
       - name: Build
         run: cmake --build build -j
 
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
       - name: Smoke test (daemon + CLI)
         shell: bash
         run: |

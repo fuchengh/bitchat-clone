@@ -42,6 +42,13 @@
 
 .doc/
 build/
-.vscode/
+compile_commands.json
+
+# Binary files for testing
 bitchatd
 bitchatctl
+
+# VSCode settings
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
