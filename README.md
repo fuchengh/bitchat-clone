@@ -11,11 +11,11 @@ cmake --build build -j
 
 ## CLI
 
-Server `build/bin/bitcahtd`
+Server `build/bin/bitchatd`
 
 ```bash
 Usage:
-  bitcahtd
+  bitchatd
 ```
 
 Client `build/bin/bitchatctl`
@@ -34,7 +34,7 @@ Commands:
 
 ```bash
 # 1. Start a temporary listener (terminal A)
-./build/bin/bitcahtd
+./build/bin/bitchatd
 
 # 2. Send a command (terminal B)
 ./build/bin/bitchatctl send "hello world"
