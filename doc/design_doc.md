@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-* Goal: Ship a demo-able one-to-one nearby messenger with end-to-end encryption over BLE (Linux + BlueZ). Development uses an in-process loopback transport to bring up the pipeline quickly.
+* Goal: Ship a demo-able one-to-one nearby messenger with end-to-end encryption over BLE (Linux + BlueZ).
 * Scope: Single link; two GATT characteristics (TX=Notify, RX=Write with response); app-level fragmentation (~100 B payload/fragment); PSK AEAD; minimal IPC/CLI for control.
 * Non-goals: ACK/NAK/retransmit, safety numbers/QR, group/mesh, key exchange, role contention. (future work)
 
@@ -12,7 +12,7 @@
 
 * Transport: LoopbackTransport (in-process, same-thread callback). BlueZ GATT on Linux for real BLE.
 * Proto: 12-byte fragment header + fragmenter/reassembler (payload <= 100 B/fragment).
-* Crypto: PskAead interface. Recommended production AEAD: XChaCha20-Poly1305 (libsodium).
+* Crypto: PskAead interface. Future: XChaCha20-Poly1305.
 * App: ChatService — plaintext -> AEAD -> fragment -> transport; reverse on RX.
 * Ctl: Minimal AF_UNIX IPC line protocol between CLI and daemon.
 
@@ -84,20 +84,20 @@ bitchatctl quit
   * MTU portability: BLE’s usable payload per notification is ATT_MTU − 3 and varies widely by device/OS. Fixing 100 B avoids edge-case failures without per-device tuning.
   * Deterministic plumbing: Upper layers never care about platform MTU; fragmenter owns sizing.
 * Header fields (practical intent):
-  * ver/flags -> format control & future bits without breaking older peers.
-  * msg_id -> groups fragments of one logical message; prevents cross-mix with other messages.
-  * seq/total -> 0-based index and final count; enables complete-only delivery and out-of-order assembly.
-  * len -> exact bytes of payload in this fragment (last chunk is shorter).
+  * `ver/flags`: format control & future bits without breaking older peers.
+  * `msg_id`: groups fragments of one logical message; prevents cross-mix with other messages.
+  * `seq/total`: 0-based index and final count; enables complete-only delivery and out-of-order assembly.
+  * `len`: exact bytes of payload in this fragment (last chunk is shorter).
 * Reassembly rules: Buffer by (sender, msg_id); accept out-of-order; deliver only when all seq in [0,total) arrive. Evict incomplete messages after a timeout to cap memory.
 
 ### 4.3 Crypto boundary (PSK AEAD; XChaCha20-Poly1305 later)
 
-* What we do: A small PskAead interface sits between app and proto. During bring-up we use a placeholder; swapping in XChaCha20-Poly1305 (libsodium) requires no changes to transport/proto.
+* What we do: A small PskAead interface sits between app and proto. Migrating to XChaCha20-Poly1305 requires no changes to transport/proto.
 * We fragment ciphertext+tag across chunks; every fragment carries its header and uses identical AAD derivation, so the receiver rejects mismatched or replayed pieces.
 
 ### 4.4 Fixed roles (central/peripheral)
 
-* Why fixed: Avoids role arbitration and halves state space. Connection logic and error handling stay lean; we can generalize later if needed.
+* Why fixed roles: Avoids role arbitration and halves state space. Connection logic and error handling stay simple; we can generalize later if needed.
 
 ### 4.5 Explicit non-features (by design)
 
