@@ -77,6 +77,8 @@ enable_testing()
 add_executable(unit_tests
   tests/test_ipc.cpp
   tests/test_cli.cpp
+  tests/test_loopback.cpp
+  tests/test_frag.cpp
 )
 target_include_directories(unit_tests PRIVATE include)
 target_link_libraries(unit_tests
@@ -85,6 +87,7 @@ target_link_libraries(unit_tests
     bitchat_ctl
     bitchat_transport
     bitchat_warnings
+    bitchat_proto
 )
 
 include(GoogleTest)
