@@ -30,6 +30,8 @@ Commands:
   quit
 ```
 
+- Default socket path: `~/.cache/bitchat-clone/ctl.sock`
+
 ## Quickstart
 
 ```bash

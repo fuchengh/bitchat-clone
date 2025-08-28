@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "app/chat_service.hpp"
+#include "proto/frag.hpp"
 #include "transport/itransport.hpp"
 #include "util/log.hpp"
 
@@ -25,19 +26,54 @@ bool ChatService::start()
 
 bool ChatService::send_text(std::string_view msg)
 {
-    // TODO: plain -> [aead.seal -> frag::make_chunks] -> transport.send
-    transport::Frame frame(msg.size());
-    std::memcpy(frame.data(), msg.data(), msg.size());
+    // TODO: plain -> [aead.seal] -> frag::make_chunks -> transport.send
+    std::vector<std::uint8_t> bytes(msg.begin(), msg.end());
+    const std::size_t         mtu = (mtu_payload_ == 0)
+                                        ? frag::MAX_PAYLOAD
+                                        : std::min<std::size_t>(mtu_payload_, frag::MAX_PAYLOAD);
 
-    return tx_.send(frame);
+    auto chunks = frag::make_chunks(msg_id_++, bytes, mtu);
+    if (!bytes.empty() && chunks.empty())
+    {
+        LOG_ERROR("send_text: make_chunks failed");
+        return false;
+    }
+
+    for (const auto &ch : chunks)
+    {
+        auto frame = frag::serialize(ch);
+        if (frame.empty())
+        {
+            LOG_ERROR("send_text: serialize failed");
+            return false;
+        }
+        if (!tx_.send(frame))
+        {
+            LOG_ERROR("send_text: transport.send failed");
+            return false;
+        }
+    }
+    return true;
 }
 
 void ChatService::on_rx(const transport::Frame &f)
 {
     // TODO: parse -> reassemble -> aead.open -> print
-    const char *p = reinterpret_cast<const char *>(f.data());
-    const int   n = static_cast<int>(f.size());
-    LOG_INFO("[RECV] %.*s", n, p);  // length-aware, safe even if there are NULs
+    auto c = frag::parse(f);
+    if (!c)
+    {
+        LOG_WARN("on_rx: dropping invalid frame");
+        return;
+    }
+    // Feed to reassembler
+    auto full = rx_.feed(*c);
+    if (!full)
+        return;
+
+    // TODO: replace with AEAD.open.
+    const char *p = reinterpret_cast<const char *>(full->data());
+    const int   n = static_cast<int>(full->size());
+    LOG_INFO("[RECV] %.*s", n, p);
 }
 
 }  // namespace app

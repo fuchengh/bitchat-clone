@@ -13,6 +13,33 @@
 
 namespace ipc
 {
+namespace fs = std::filesystem;
+
+static bool ensure_parent_dir(const std::string &sock_path)
+{
+    std::error_code ec;
+    fs::path        p(sock_path);
+    fs::path        dir = p.parent_path();
+    if (dir.empty())
+        return true;  // socket in CWD
+
+    if (!fs::exists(dir, ec))
+    {
+        if (!fs::create_directories(dir, ec))
+        {
+            LOG_ERROR("create_directories(%s) failed: %s", dir.string().c_str(),
+                      ec.message().c_str());
+            return false;
+        }
+    }
+    // Enforce 0700 on the directory
+    fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace, ec);
+    if (ec)
+    {
+        LOG_WARN("permissions(%s, 0700) failed: %s", dir.string().c_str(), ec.message().c_str());
+    }
+    return true;
+}
 
 bool start_server(const std::string &sock_path, void (*on_line)(const std::string &))
 {
@@ -33,13 +60,8 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
     }
 
     // ensure parent directory exists (mkdir -p)
-    {
-        std::error_code       ec;
-        std::filesystem::path p(sock_path);
-        auto                  parent = p.parent_path();
-        if (!parent.empty())
-            std::filesystem::create_directories(parent, ec);
-    }
+    if (!ensure_parent_dir(sock_path))
+        return false;
 
     (void)::unlink(sock_path.c_str());  // ignore errors
 
