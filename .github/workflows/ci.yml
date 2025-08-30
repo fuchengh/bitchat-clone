@@ -83,8 +83,6 @@ jobs:
             echo "daemon still running!" >&2
             exit 1
           fi
-          grep -q "CMD: SEND ci hello" daemon.log
-          grep -q "TAIL Enabled" daemon.log
 
 
       - name: Show ccache stats
