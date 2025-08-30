@@ -1,5 +1,0 @@
-15:58:03.793| [WARN] main: Using NoopPskAead (encryption disabled)
-15:58:03.794| [INFO] start_server: Listening on /Users/fhsieh/.cache/bitchat-clone/ctl.sock
-15:58:08.579| [INFO] on_line: CMD: SEND hello aead+frag
-15:58:08.579| [INFO] on_rx: [RECV] hello aead+frag
-15:58:12.737| [INFO] on_line: Received QUIT command, exiting...
