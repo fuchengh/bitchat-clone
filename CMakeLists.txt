@@ -30,18 +30,18 @@ target_link_libraries(bitchat_proto PRIVATE bitchat_warnings)
 add_library(bitchat_crypto STATIC src/crypto/psk_aead.cpp)
 target_include_directories(bitchat_crypto PUBLIC include)
 target_link_libraries(bitchat_crypto PRIVATE bitchat_warnings)
-# libsodium
+
+# libsodium via pkg-config (IMPORTED_TARGET)
 find_package(PkgConfig QUIET)
 if (PkgConfig_FOUND)
-  pkg_check_modules(LIBSODIUM QUIET libsodium)
+  pkg_check_modules(LIBSODIUM QUIET IMPORTED_TARGET libsodium)
 endif()
 
-if (LIBSODIUM_FOUND)
-  target_include_directories(bitchat_crypto PRIVATE ${LIBSODIUM_INCLUDE_DIRS})
-  target_link_libraries(bitchat_crypto PRIVATE ${LIBSODIUM_LIBRARIES})
-  target_compile_options(bitchat_crypto PRIVATE ${LIBSODIUM_CFLAGS_OTHER})
+if (TARGET PkgConfig::LIBSODIUM)
+  # Propagate include+link to dependents (PUBLIC)
+  target_link_libraries(bitchat_crypto PUBLIC PkgConfig::LIBSODIUM)
 else()
-  # Fallback
+  # Fallback: absolute paths
   find_path(SODIUM_INCLUDE_DIR NAMES sodium.h
             HINTS /usr/include /usr/local/include /opt/homebrew/include)
   find_library(SODIUM_LIBRARY NAMES sodium
@@ -49,8 +49,8 @@ else()
   if (NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
     message(FATAL_ERROR "libsodium not found. Install libsodium-dev (Ubuntu) or brew install libsodium (macOS).")
   endif()
-  target_include_directories(bitchat_crypto PRIVATE ${SODIUM_INCLUDE_DIR})
-  target_link_libraries(bitchat_crypto PRIVATE ${SODIUM_LIBRARY})
+  target_include_directories(bitchat_crypto PUBLIC ${SODIUM_INCLUDE_DIR})
+  target_link_libraries(bitchat_crypto PUBLIC ${SODIUM_LIBRARY})
 endif()
 
 # --- IPC
