@@ -70,6 +70,9 @@ bool ChatService::send_text(std::string_view msg)
 
 void ChatService::on_rx(const transport::Frame &f)
 {
+    if (!tail_enabled_.load(std::memory_order_relaxed))
+        return;
+
     // parse -> reassemble -> aead.open -> print
     auto c = frag::parse(f);
     if (!c)

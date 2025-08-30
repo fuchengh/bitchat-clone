@@ -1,4 +1,3 @@
-#include <atomic>
 #include <cassert>
 #include <string>
 
@@ -13,8 +12,6 @@ static transport::LoopbackTransport   g_tx;
 static std::unique_ptr<aead::PskAead> g_aead;
 static app::ChatService              *g_chat;
 
-static std::atomic<bool> g_tail_enabled{false};
-
 static void on_line(const std::string &line)
 {
     if (line == "QUIT")
@@ -24,13 +21,15 @@ static void on_line(const std::string &line)
     }
     if (line == "TAIL on")
     {
-        g_tail_enabled.store(true);
+        if (g_chat)
+            g_chat->set_tail(true);
         LOG_INFO("TAIL Enabled");
         return;
     }
     if (line == "TAIL off")
     {
-        g_tail_enabled.store(false);
+        if (g_chat)
+            g_chat->set_tail(false);
         LOG_INFO("TAIL Disabled");
         return;
     }
