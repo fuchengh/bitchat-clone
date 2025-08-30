@@ -23,8 +23,7 @@ class ChatService
     aead::PskAead                              &aead_;
     frag::Reassembler                           rx_;
     std::size_t                                 mtu_payload_{100};
-    std::atomic<std::uint32_t>                  msg_id_{1};
-    [[maybe_unused]] std::atomic<std::uint64_t> send_ctr_{0}, recv_ctr_{0};
+    std::atomic<std::uint32_t>                  next_id_{1};
     bool                       tail_{true};
 };
 

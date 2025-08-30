@@ -36,32 +36,45 @@ static void on_line(const std::string &line)
     }
     if (line.rfind("SEND ", 0) == 0)  // sending msg
     {
-        assert(g_chat != nullptr);
-        g_chat->send_text(std::string_view{line}.substr(5));
+        auto msg = line.substr(5);
+        LOG_INFO("CMD: SEND %s", msg.c_str());
+        if (g_chat)
+            g_chat->send_text(std::string_view{msg});
+        else
+            LOG_WARN("ChatService not ready");
         return;
     }
 }
 
 int main()
 {
+    // AEAD: prefer Sodium key if env is set, else Noop
     if (auto s = aead::SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX"))
     {
-        LOG_DEBUG("Using libsodium");
+        LOG_INFO("Using SodiumPskAead (key from BITCHAT_PSK_HEX)");
         g_aead = std::make_unique<aead::SodiumPskAead>(*s);
     }
     else
     {
-        LOG_DEBUG("Using noop-pskaead");
+        LOG_WARN("Using NoopPskAead (encryption disabled)");
         g_aead = std::make_unique<aead::NoopPskAead>();
     }
 
-    bitchat::set_log_level(bitchat::Level::Info);
-    // start chat service
-    app::ChatService chat_service{g_tx, *g_aead, /*mtu*/ 100};
-    g_chat = &chat_service;
+    // chat service
+    app::ChatService chat(g_tx, *g_aead, /*mtu_payload*/ 100);
+    if (!chat.start())
+    {
+        LOG_ERROR("ChatService start failed");
+        return 1;
+    }
+    g_chat = &chat;
 
-    // start daemon IPC server
-    std::string sock = ipc::expand_user(std::string(constants::kCtlSock));
-    bool        ok   = ipc::start_server(sock, on_line);
-    return ok ? 0 : 1;
+    // IPC server
+    const std::string sock = ipc::expand_user(std::string(constants::kCtlSock));
+    if (!ipc::start_server(sock, &on_line))
+    {
+        LOG_ERROR("start_server failed");
+        return 1;
+    }
+    return 0;
 }
