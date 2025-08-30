@@ -1,16 +1,15 @@
 #pragma once
 #include <array>
 #include <cstdint>
-#include <sodium.h>
 #include <string_view>
 #include <vector>
 
 namespace aead
 {
 
-constexpr std::size_t KEY_SIZE   = crypto_aead_xchacha20poly1305_ietf_KEYBYTES;
-constexpr std::size_t NONCE_SIZE = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
-constexpr std::size_t TAG_SIZE   = crypto_aead_xchacha20poly1305_ietf_ABYTES;
+constexpr std::size_t KEY_SIZE   = 32;  // crypto_aead_xchacha20poly1305_ietf_KEYBYTES
+constexpr std::size_t NONCE_SIZE = 24;  // crypto_aead_xchacha20poly1305_ietf_NPUBBYTES
+constexpr std::size_t TAG_SIZE   = 16;  // crypto_aead_xchacha20poly1305_ietf_ABYTES
 
 class PskAead
 {

@@ -2,12 +2,18 @@
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <sodium.h>
 
 #include "crypto/psk_aead.hpp"
 
 namespace aead
 {
+
+static_assert(aead::KEY_SIZE == crypto_aead_xchacha20poly1305_ietf_KEYBYTES, "key size mismatch");
+static_assert(aead::NONCE_SIZE == crypto_aead_xchacha20poly1305_ietf_NPUBBYTES,
+              "nonce size mismatch");
+static_assert(aead::TAG_SIZE == crypto_aead_xchacha20poly1305_ietf_ABYTES, "tag size mismatch");
 
 static bool ensure_sodium_init()
 {
