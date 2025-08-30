@@ -59,21 +59,25 @@ Commands:
 ./build/bin/bitchatd
 
 # 2. Terminal B — talk to it:
-./build/bin/bitchatctl send "hello world"
+./build/bin/bitchatctl tail off
+./build/bin/bitchatctl send "should be silent" # no [RECV]
 ./build/bin/bitchatctl tail on
-./build/bin/bitchatctl send "another line"
+./build/bin/bitchatctl send "now visible"      # daemon prints: [RECV] now visible
 ./build/bin/bitchatctl quit
 ```
 
 Expected daemon logs (abridged):
 
 ```text
-[INFO] Listening on ~/.cache/bitchat-clone/ctl.sock
-[INFO] CMD: SEND hello world
-[INFO] TAIL Enabled
-[RECV] hello world
-[RECV] another line
-[INFO] Received QUIT command, exiting...
+[INFO] main: Using {SodiumPskAead (key from BITCHAT_PSK_HEX) | NoopPskAead (plaintext)}
+[INFO] start_server: Listening on ~/.cache/bitchat-clone/ctl.sock
+[INFO] on_line: TAIL Disabled
+[INFO] on_line: CMD: SEND should be silent
+# (no [RECV])
+[INFO] on_line: TAIL Enabled
+[INFO] on_line: CMD: SEND now visible
+[INFO] on_rx: [RECV] now visible
+[INFO] on_line: Received QUIT command, exiting...
 ```
 
 Note: printing of [RECV] ... is gated by tail on.
