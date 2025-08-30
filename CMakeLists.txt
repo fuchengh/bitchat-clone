@@ -30,6 +30,11 @@ target_link_libraries(bitchat_proto PRIVATE bitchat_warnings)
 add_library(bitchat_crypto STATIC src/crypto/psk_aead.cpp)
 target_include_directories(bitchat_crypto PUBLIC include)
 target_link_libraries(bitchat_crypto PRIVATE bitchat_warnings)
+# --- libsodium
+find_path(SODIUM_INCLUDE_DIR NAMES sodium.h HINTS /opt/homebrew/include /usr/local/include /usr/include)
+find_library(SODIUM_LIBRARY NAMES sodium HINTS /opt/homebrew/lib /usr/local/lib /usr/lib)
+target_include_directories(bitchat_crypto PUBLIC ${SODIUM_INCLUDE_DIR})
+target_link_libraries(bitchat_crypto PRIVATE ${SODIUM_LIBRARY})
 
 # --- Transport (BlueZ is Linux-only; keep it off on macOS by default)
 option(BITCHAT_WITH_BLUEZ "Build BlueZ transport (Linux only)" OFF)
@@ -79,6 +84,7 @@ add_executable(unit_tests
   tests/test_cli.cpp
   tests/test_loopback.cpp
   tests/test_frag.cpp
+  tests/test_aead.cpp
 )
 target_include_directories(unit_tests PRIVATE include)
 target_link_libraries(unit_tests
@@ -88,6 +94,7 @@ target_link_libraries(unit_tests
     bitchat_transport
     bitchat_warnings
     bitchat_proto
+    bitchat_crypto
 )
 
 include(GoogleTest)

@@ -1,16 +1,17 @@
 #include <atomic>
+#include <cassert>
 #include <string>
-#include "ctl/ipc.hpp"
-#include "util/constants.hpp"
-#include "util/log.hpp"
 
 #include "app/chat_service.hpp"
 #include "crypto/psk_aead.hpp"
+#include "ctl/ipc.hpp"
 #include "transport/loopback_transport.hpp"
+#include "util/constants.hpp"
+#include "util/log.hpp"
 
-static transport::LoopbackTransport g_tx;
-static aead::PskAead                g_aead;
-static app::ChatService             g_chat{g_tx, g_aead, /*mtu=*/100};
+static transport::LoopbackTransport   g_tx;
+static std::unique_ptr<aead::PskAead> g_aead;
+static app::ChatService              *g_chat;
 
 static std::atomic<bool> g_tail_enabled{false};
 
@@ -35,16 +36,29 @@ static void on_line(const std::string &line)
     }
     if (line.rfind("SEND ", 0) == 0)  // sending msg
     {
-        g_chat.send_text(std::string_view{line}.substr(5));
+        assert(g_chat != nullptr);
+        g_chat->send_text(std::string_view{line}.substr(5));
         return;
     }
 }
 
 int main()
 {
+    if (auto s = aead::SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX"))
+    {
+        LOG_DEBUG("Using libsodium");
+        g_aead = std::make_unique<aead::SodiumPskAead>(*s);
+    }
+    else
+    {
+        LOG_DEBUG("Using noop-pskaead");
+        g_aead = std::make_unique<aead::NoopPskAead>();
+    }
+
     bitchat::set_log_level(bitchat::Level::Info);
     // start chat service
-    g_chat.start();
+    app::ChatService chat_service{g_tx, *g_aead, /*mtu*/ 100};
+    g_chat = &chat_service;
 
     // start daemon IPC server
     std::string sock = ipc::expand_user(std::string(constants::kCtlSock));

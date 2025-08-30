@@ -20,7 +20,7 @@ class ChatService
 
   private:
     transport::ITransport                      &tx_;
-    [[maybe_unused]] aead::PskAead             &aead_;
+    aead::PskAead                              &aead_;
     frag::Reassembler                           rx_;
     std::size_t                                 mtu_payload_{100};
     std::atomic<std::uint32_t>                  msg_id_{1};
