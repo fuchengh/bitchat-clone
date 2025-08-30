@@ -57,6 +57,30 @@ endif()
 add_library(bitchat_ctl STATIC src/ctl/ipc.cpp)
 target_include_directories(bitchat_ctl PUBLIC include)
 target_link_libraries(bitchat_ctl PRIVATE bitchat_warnings)
+# transport sources
+set(TRANSPORT_SRCS src/transport/loopback_transport.cpp)
+
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(PkgConfig QUIET)
+  if (PkgConfig_FOUND)
+    pkg_check_modules(BLUEZ QUIET bluez)
+  endif()
+  if (BLUEZ_FOUND)
+    list(APPEND TRANSPORT_SRCS src/transport/bluez_transport.cpp)
+  else()
+    message(STATUS "BlueZ not found; building transport without bluez_transport.cpp")
+  endif()
+endif()
+
+add_library(bitchat_transport STATIC ${TRANSPORT_SRCS})
+target_include_directories(bitchat_transport PUBLIC include)
+target_link_libraries(bitchat_transport PRIVATE bitchat_warnings)
+
+# if bluez found, add header and lib (linux only)
+if (BLUEZ_FOUND)
+  target_include_directories(bitchat_transport PRIVATE ${BLUEZ_INCLUDE_DIRS})
+  target_link_libraries(bitchat_transport PRIVATE ${BLUEZ_LIBRARIES})
+endif()
 
 # --- App
 add_library(bitchat_app STATIC src/app/chat_service.cpp)
