@@ -30,23 +30,28 @@ target_link_libraries(bitchat_proto PRIVATE bitchat_warnings)
 add_library(bitchat_crypto STATIC src/crypto/psk_aead.cpp)
 target_include_directories(bitchat_crypto PUBLIC include)
 target_link_libraries(bitchat_crypto PRIVATE bitchat_warnings)
-# --- libsodium
-find_path(SODIUM_INCLUDE_DIR NAMES sodium.h HINTS /opt/homebrew/include /usr/local/include /usr/include)
-find_library(SODIUM_LIBRARY NAMES sodium HINTS /opt/homebrew/lib /usr/local/lib /usr/lib)
-target_include_directories(bitchat_crypto PUBLIC ${SODIUM_INCLUDE_DIR})
-target_link_libraries(bitchat_crypto PRIVATE ${SODIUM_LIBRARY})
-
-# --- Transport (BlueZ is Linux-only; keep it off on macOS by default)
-option(BITCHAT_WITH_BLUEZ "Build BlueZ transport (Linux only)" OFF)
-set(BITCHAT_TRANSPORT_SRCS
-  src/transport/loopback_transport.cpp
-)
-if(BITCHAT_WITH_BLUEZ AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  list(APPEND BITCHAT_TRANSPORT_SRCS src/transport/bluez_transport.cpp)
+# libsodium
+find_package(PkgConfig QUIET)
+if (PkgConfig_FOUND)
+  pkg_check_modules(LIBSODIUM QUIET libsodium)
 endif()
-add_library(bitchat_transport STATIC ${BITCHAT_TRANSPORT_SRCS})
-target_include_directories(bitchat_transport PUBLIC include)
-target_link_libraries(bitchat_transport PRIVATE bitchat_warnings)
+
+if (LIBSODIUM_FOUND)
+  target_include_directories(bitchat_crypto PRIVATE ${LIBSODIUM_INCLUDE_DIRS})
+  target_link_libraries(bitchat_crypto PRIVATE ${LIBSODIUM_LIBRARIES})
+  target_compile_options(bitchat_crypto PRIVATE ${LIBSODIUM_CFLAGS_OTHER})
+else()
+  # Fallback
+  find_path(SODIUM_INCLUDE_DIR NAMES sodium.h
+            HINTS /usr/include /usr/local/include /opt/homebrew/include)
+  find_library(SODIUM_LIBRARY NAMES sodium
+               HINTS /usr/lib /usr/local/lib /opt/homebrew/lib)
+  if (NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
+    message(FATAL_ERROR "libsodium not found. Install libsodium-dev (Ubuntu) or brew install libsodium (macOS).")
+  endif()
+  target_include_directories(bitchat_crypto PRIVATE ${SODIUM_INCLUDE_DIR})
+  target_link_libraries(bitchat_crypto PRIVATE ${SODIUM_LIBRARY})
+endif()
 
 # --- IPC
 add_library(bitchat_ctl STATIC src/ctl/ipc.cpp)
