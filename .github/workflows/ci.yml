@@ -67,23 +67,72 @@ jobs:
       - name: Run unit tests
         run: ctest --test-dir build --output-on-failure
 
-      - name: Smoke test (daemon + CLI)
+      - name: Smoke test (basic CLI <-> daemon)
         shell: bash
         run: |
           set -euo pipefail
           ./build/bin/bitchatd >daemon.log 2>&1 &
           DAEMON_PID=$!
           trap 'kill $DAEMON_PID 2>/dev/null || true' EXIT
-          sleep 0.5
+
+          sock="${HOME}/.cache/bitchat-clone/ctl.sock"
+          # wait for socket up to 4s
+          for i in {1..40}; do
+            [[ -S "$sock" ]] && break
+            sleep 0.1
+          done
+          [[ -S "$sock" ]] || { echo "socket not ready: $sock" >&2; exit 1; }
+
           ./build/bin/bitchatctl send "ci hello"
           ./build/bin/bitchatctl tail on
           ./build/bin/bitchatctl quit
-          sleep 0.5
-          if ps -p "$DAEMON_PID" > /dev/null 2>&1; then
+
+          # wait daemon exit (up to 3s)
+          for i in {1..30}; do
+            if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if kill -0 "$DAEMON_PID" 2>/dev/null; then
             echo "daemon still running!" >&2
             exit 1
           fi
+          # socket should be gone after graceful shutdown
+          [[ ! -S "$sock" ]] || { echo "socket still exists after quit: $sock" >&2; exit 1; }
 
+      - name: Smoke test (long message ~4096B)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build/bin/bitchatd >daemon_long.log 2>&1 &
+          DAEMON_PID=$!
+          trap 'kill $DAEMON_PID 2>/dev/null || true' EXIT
+
+          sock="${HOME}/.cache/bitchat-clone/ctl.sock"
+          for i in {1..40}; do
+            [[ -S "$sock" ]] && break
+            sleep 0.1
+          done
+          [[ -S "$sock" ]] || { echo "socket not ready: $sock" >&2; exit 1; }
+
+          # build a 4096B payload without trailing newline
+          longmsg="$(python3 -c 'import sys; sys.stdout.write("X"*4096)')"
+
+          ./build/bin/bitchatctl send "$longmsg"
+          ./build/bin/bitchatctl quit
+
+          for i in {1..30}; do
+            if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if kill -0 "$DAEMON_PID" 2>/dev/null; then
+            echo "daemon still running!" >&2
+            exit 1
+          fi
+          [[ ! -S "$sock" ]] || { echo "socket still exists after quit: $sock" >&2; exit 1; }
 
       - name: Show ccache stats
         run: ccache -s || true
