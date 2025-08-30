@@ -114,11 +114,13 @@ add_executable(unit_tests
   tests/test_loopback.cpp
   tests/test_frag.cpp
   tests/test_aead.cpp
+  tests/test_chat.cpp
 )
 target_include_directories(unit_tests PRIVATE include)
 target_link_libraries(unit_tests
   PRIVATE
     gtest_main
+    bitchat_app
     bitchat_ctl
     bitchat_transport
     bitchat_warnings

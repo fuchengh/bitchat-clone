@@ -38,15 +38,18 @@ bool ChatService::send_text(std::string_view msg)
         LOG_ERROR("send_text: AEAD seal failed");
         return false;
     }
-    // 2) Make chunk
-    const std::uint32_t msg_id = next_id_.fetch_add(1, std::memory_order_relaxed);
 
-    auto chunks = frag::make_chunks(msg_id, sealed_text, mtu_payload_);
+    // 2) Make chunk
+    const std::size_t frame_mtu   = mtu_payload_;
+    const std::size_t payload_mtu = (frame_mtu > frag::HDR_SIZE) ? (frame_mtu - frag::HDR_SIZE)
+                                                                 : 0;
+    auto              chunks = frag::make_chunks(next_id_.fetch_add(1), sealed_text, payload_mtu);
     if (!sealed_text.empty() && chunks.empty())
     {
         LOG_ERROR("send_text: make_chunks failed");
         return false;
     }
+
     // 3) Send
     for (const auto &ch : chunks)
     {
