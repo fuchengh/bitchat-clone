@@ -10,61 +10,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  build-test:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install ccache
+      - name: Install deps (Ubuntu)
         run: |
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            sudo apt-get update
-            sudo apt-get install -y ccache
-          else
-            brew install ccache
-          fi
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config \
+            libbluetooth-dev libsystemd-dev libsodium-dev
 
-      # Set CCACHE_DIR using $GITHUB_ENV so later steps see the expanded HOME path
-      - name: Set CCACHE_DIR
-        run: echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake') }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-
-      - name: Install libsodium
+      - name: Configure (Ninja, BlueZ ON)
         run: |
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            sudo apt-get update
-            sudo apt-get install -y libsodium-dev pkg-config
-          else
-            brew install libsodium pkg-config
-          fi
-
-      - name: Configure (CMake)
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_BUILD_TYPE=Debug \
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DBITCHAT_WERROR=ON \
-            -DBITCHAT_WITH_BLUEZ=OFF
+            -DBITCHAT_WITH_BLUEZ=ON
 
       - name: Build
         run: cmake --build build -j
 
-      - name: Run unit tests
+      - name: Test
         run: ctest --test-dir build --output-on-failure
 
       - name: Smoke test (basic CLI <-> daemon)
