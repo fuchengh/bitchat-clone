@@ -1,5 +1,6 @@
 #include <cassert>
 #include <string>
+#include <memory>
 
 #include "app/chat_service.hpp"
 #include "crypto/psk_aead.hpp"
@@ -69,7 +70,7 @@ int main()
     g_chat = &chat;
 
     // IPC server
-    const std::string sock = ipc::expand_user(std::string(constants::kCtlSock));
+    const std::string sock = ipc::expand_user(std::string(constants::CTL_SOCK_PATH));
     if (!ipc::start_server(sock, &on_line))
     {
         LOG_ERROR("start_server failed");

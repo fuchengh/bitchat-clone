@@ -15,7 +15,7 @@ Install libsodium first:
 - **MacOS**
 
 ```bash
-brew install libsodium pkgconfg
+brew install libsodium
 ```
 
 - **Ubuntu**
