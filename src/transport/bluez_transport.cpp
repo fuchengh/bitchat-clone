@@ -138,7 +138,7 @@ static int chr_prop_Notifying(sd_bus * /*bus*/,
     return sd_bus_message_append(reply, "b", b);
 }
 
-// ---- Methods: StartNotify / StopNotify (TX) ----
+// ---- TX Methods ----
 static int tx_StartNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);
@@ -155,7 +155,7 @@ static int tx_StopNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
     return sd_bus_reply_method_return(m, "");
 }
 
-// ---- Method: WriteValue (RX) ----
+// ---- RX Methods ----
 static int rx_WriteValue(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret_err*/)
 {
     const void *buf = nullptr;
@@ -186,6 +186,7 @@ static int rx_WriteValue(sd_bus_message *m, void * /*userdata*/, sd_bus_error * 
     return sd_bus_reply_method_return(m, "");
 }
 
+// ---- Advertising BitChat App ----
 static int adv_Release(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret*/)
 {
     LOG_INFO("[BLUEZ] adv.Release()");
@@ -422,7 +423,7 @@ bool BluezTransport::send(const Frame & /*frame*/)
 {
     if (!running_.load(std::memory_order_relaxed))
         return false;
-    // Stub only: later we will map Frame -> GATT Write.
+    // TODO: later we will map Frame -> GATT Write.
     LOG_INFO("[BLUEZ] stub send (frame)");
     return true;
 }
