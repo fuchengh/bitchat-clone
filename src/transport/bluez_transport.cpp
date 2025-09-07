@@ -377,6 +377,7 @@ void BluezTransport::set_reg_ok(bool v)
     impl_->reg_ok.store(v);
 #endif
     // noop if sdbus is unavailable
+    (void)v;
 }
 
 #if BITCHAT_HAVE_SDBUS
