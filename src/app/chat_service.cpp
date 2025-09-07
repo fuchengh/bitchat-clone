@@ -1,9 +1,13 @@
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <string>
 
 #include "app/chat_service.hpp"
 #include "proto/frag.hpp"
+#include "transport/bluez_transport.hpp"
 #include "transport/itransport.hpp"
+#include "util/constants.hpp"
 #include "util/log.hpp"
 
 namespace app
@@ -18,13 +22,32 @@ ChatService::ChatService(transport::ITransport &t, aead::PskAead &aead, std::siz
 
 bool ChatService::start()
 {
-    transport::Settings s{
-        .role        = "loopback",
-        .svc_uuid    = {},
-        .tx_uuid     = {},
-        .rx_uuid     = {},
-        .mtu_payload = mtu_payload_,
+    // Default to loopback
+    // If BITCHAT_TRANSPORT=bluez we pass BLE UUIDs and role
+    auto env_or = [](const char *key, const char *defv) -> std::string {
+        const char *v = std::getenv(key);
+        return v ? std::string(v) : std::string(defv);
     };
+
+    const std::string which = env_or("BITCHAT_TRANSPORT", "loopback");
+
+    transport::Settings s{};
+    s.mtu_payload = mtu_payload_;
+
+    if (which == "bluez")
+    {
+        // Role for BlueZ: "central" or "peripheral" (default peripheral)
+        s.role = env_or("BITCHAT_ROLE", "peripheral");
+        // Fixed UUIDs per project spec.
+        s.svc_uuid = constants::SVC_UUID;
+        s.tx_uuid  = constants::TX_UUID;  // Notify
+        s.rx_uuid  = constants::RX_UUID;  // Write w/ response
+    }
+    else
+    {
+        // Loopback for testing/dev
+        s.role = "loopback";
+    }
 
     return tx_.start(s, [this](const transport::Frame &f) { this->on_rx(f); });
 }

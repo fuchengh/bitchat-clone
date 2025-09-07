@@ -17,6 +17,11 @@ BluezTransport::~BluezTransport()
     stop();
 }
 
+std::string BluezTransport::name() const
+{
+    return "bluez";
+}
+
 bool BluezTransport::start(const Settings &s, OnFrame cb)
 {
     if (running_.load(std::memory_order_relaxed))

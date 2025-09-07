@@ -60,15 +60,16 @@ target_link_libraries(bitchat_ctl PRIVATE bitchat_warnings)
 # transport sources
 set(TRANSPORT_SRCS src/transport/loopback_transport.cpp)
 
+# On Linux, always build the BlueZ transport stub. It has no external headers yet.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND TRANSPORT_SRCS src/transport/bluez_transport.cpp)
+  # If BlueZ dev package exists, we will link it (not required for the stub).
   find_package(PkgConfig QUIET)
   if (PkgConfig_FOUND)
     pkg_check_modules(BLUEZ QUIET bluez)
-  endif()
-  if (BLUEZ_FOUND)
-    list(APPEND TRANSPORT_SRCS src/transport/bluez_transport.cpp)
-  else()
-    message(STATUS "BlueZ not found; building transport without bluez_transport.cpp")
+    if (NOT BLUEZ_FOUND)
+      message(STATUS "BlueZ dev libs not found; building bluez transport WITHOUT libbluetooth linkage (stub mode)")
+    endif()
   endif()
 endif()
 
@@ -76,7 +77,7 @@ add_library(bitchat_transport STATIC ${TRANSPORT_SRCS})
 target_include_directories(bitchat_transport PUBLIC include)
 target_link_libraries(bitchat_transport PRIVATE bitchat_warnings)
 
-# if bluez found, add header and lib (linux only)
+# If BlueZ dev is found, add cflags/libs (linux only). Not required for stub.
 if (BLUEZ_FOUND)
   target_include_directories(bitchat_transport PRIVATE ${BLUEZ_INCLUDE_DIRS})
   target_link_libraries(bitchat_transport PRIVATE ${BLUEZ_LIBRARIES})
