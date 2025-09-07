@@ -100,7 +100,7 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
         return false;
     }
 
-    LOG_INFO("Listening on %s", sock_path.c_str());
+    LOG_DEBUG("Listening on %s", sock_path.c_str());
 
     while (1)
     {

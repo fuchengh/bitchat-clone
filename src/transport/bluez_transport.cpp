@@ -24,8 +24,8 @@ static int on_reg_app_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*
     }
     else
     {
-        LOG_INFO("[BLUEZ] GATT app registered at %s (bus=%s)", self->app_path().c_str(),
-                 self->unique_name().c_str());
+        LOG_DEBUG("[BLUEZ] GATT app registered at %s (bus=%s)", self->app_path().c_str(),
+                  self->unique_name().c_str());
         self->set_reg_ok(true);
     }
     return 1;  // handled
@@ -165,7 +165,7 @@ static int rx_WriteValue(sd_bus_message *m, void * /*userdata*/, sd_bus_error * 
     int r = sd_bus_message_read_array(m, 'y', &buf, &len);
     if (r < 0)
         return r;
-    LOG_INFO("[BLUEZ] rx.WriteValue len=%zu", len);
+    LOG_DEBUG("[BLUEZ] rx.WriteValue len=%zu", len);
 
     // read "a{sv}" (options map) and skip entries
     r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sv}");
@@ -189,7 +189,7 @@ static int rx_WriteValue(sd_bus_message *m, void * /*userdata*/, sd_bus_error * 
 // ---- Advertising BitChat App ----
 static int adv_Release(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret*/)
 {
-    LOG_INFO("[BLUEZ] adv.Release()");
+    LOG_DEBUG("[BLUEZ] adv.Release()");
     return sd_bus_reply_method_return(m, "");
 }
 
@@ -255,7 +255,7 @@ static int on_reg_adv_reply(sd_bus_message *m, void * /*userdata*/, sd_bus_error
     }
     else
     {
-        LOG_INFO("[BLUEZ] LE advertisement registered");
+        LOG_DEBUG("[BLUEZ] LE advertisement registered");
     }
     return 1;
 }
@@ -405,11 +405,11 @@ bool BluezTransport::start(const Settings &s, OnFrame cb)
     if (!impl_)
         impl_ = std::make_unique<Impl>();
 
-    LOG_INFO("[BLUEZ] stub start: role=%s adapter=%s mtu_payload=%zu svc=%s tx=%s rx=%s%s%s",
-             (cfg_.role == Role::Central ? "central" : "peripheral"), cfg_.adapter.c_str(),
-             settings_.mtu_payload, cfg_.svc_uuid.c_str(), cfg_.tx_uuid.c_str(),
-             cfg_.rx_uuid.c_str(), cfg_.peer_addr ? " peer=" : "",
-             cfg_.peer_addr ? cfg_.peer_addr->c_str() : "");
+    LOG_DEBUG("[BLUEZ] stub start: role=%s adapter=%s mtu_payload=%zu svc=%s tx=%s rx=%s%s%s",
+              (cfg_.role == Role::Central ? "central" : "peripheral"), cfg_.adapter.c_str(),
+              settings_.mtu_payload, cfg_.svc_uuid.c_str(), cfg_.tx_uuid.c_str(),
+              cfg_.rx_uuid.c_str(), cfg_.peer_addr ? " peer=" : "",
+              cfg_.peer_addr ? cfg_.peer_addr->c_str() : "");
 
     bool ok = (cfg_.role == Role::Peripheral) ? start_peripheral() : start_central();
     if (ok)
@@ -428,7 +428,7 @@ bool BluezTransport::send(const Frame & /*frame*/)
     if (!running_.load(std::memory_order_relaxed))
         return false;
     // TODO: later we will map Frame -> GATT Write.
-    LOG_INFO("[BLUEZ] stub send (frame)");
+    LOG_DEBUG("[BLUEZ] stub send (frame)");
     return true;
 }
 
@@ -445,7 +445,7 @@ void BluezTransport::stop()
     else
         stop_central();
 
-    LOG_INFO("[BLUEZ] stub stop");
+    LOG_DEBUG("[BLUEZ] stub stop");
     impl_.reset();
 }
 
@@ -484,7 +484,7 @@ bool BluezTransport::start_peripheral()
         LOG_ERROR("[BLUEZ] add service vtable failed: %d", r);
         return false;
     }
-    LOG_INFO("[BLUEZ] service vtable exported at %s (bus=%s)", impl_->svc_path.c_str(),
+    LOG_DEBUG("[BLUEZ] service vtable exported at %s (bus=%s)", impl_->svc_path.c_str(),
              impl_->unique_name.c_str());
     // TX characteristic: org.bluez.GattCharacteristic1 (Flags=["notify"])
     r = sd_bus_add_object_vtable(impl_->bus, &impl_->tx_slot, impl_->tx_path.c_str(),
@@ -560,7 +560,7 @@ void BluezTransport::stop_peripheral()
     if (impl_->bus)
     {
         sd_bus_message *rep = nullptr;
-        sd_bus_error    err = SD_BUS_ERROR_NULL;
+        sd_bus_error    err{};
         (void)sd_bus_call_method(impl_->bus, "org.bluez", impl_->adapter_path.c_str(),
                                  "org.bluez.LEAdvertisingManager1", "UnregisterAdvertisement",
                                  &err, &rep, "o", impl_->adv_path.c_str());
