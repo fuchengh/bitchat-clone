@@ -43,10 +43,18 @@ class BluezTransport final : public ITransport
     const std::string &rx_path() const;
     const std::string &svc_path() const;
     const std::string &app_path() const;
+    const std::string &dev_path() const;
     const std::string &unique_name() const;
     bool               tx_notifying() const;
     void               set_tx_notifying(bool v);
     void               set_reg_ok(bool v);
+    void               set_dev_path(const char *path);
+    bool               connected() const;
+    void               set_connected(bool v);
+    bool               subscribed() const;
+    void               set_subscribed(bool v);
+    void               set_connect_inflight(bool v);
+
 #if BITCHAT_HAVE_SDBUS
     void emit_tx_props_changed(const char *prop);
 #endif
@@ -63,12 +71,15 @@ class BluezTransport final : public ITransport
     // peripheral-side helpers
     bool start_peripheral();
     void stop_peripheral();
-    // central-side helpers (TODO)
-    bool start_central()
-    {
-        return true;
-    }
-    void stop_central() {}
+    bool start_central();
+    void stop_central();
+    bool central_cold_scan();
+    bool central_start_discovery();
+    bool central_connect();
+    bool central_find_gatt_paths();
+    bool central_enable_notify();
+    bool central_write(const uint8_t *data, size_t len);
+    void central_pump();
 };
 
 }  // namespace transport
