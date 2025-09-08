@@ -2,6 +2,8 @@
 #include <cctype>
 #include <cerrno>
 #include <cstring>
+#include <memory>
+#include <vector>
 
 #include "transport/bluez_transport.hpp"
 #include "util/log.hpp"
@@ -142,6 +144,7 @@ static int tx_StartNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*re
     auto *self = static_cast<transport::BluezTransport *>(userdata);
     self->set_tx_notifying(true);
     self->emit_tx_props_changed("Notifying");
+    LOG_DEBUG("[BLUEZ] tx.StartNotify");
     return sd_bus_reply_method_return(m, "");
 }
 
@@ -150,14 +153,16 @@ static int tx_StopNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
     auto *self = static_cast<transport::BluezTransport *>(userdata);
     self->set_tx_notifying(false);
     self->emit_tx_props_changed("Notifying");
+    LOG_DEBUG("[BLUEZ] tx.StopNotify");
     return sd_bus_reply_method_return(m, "");
 }
 
 // RX method
-static int rx_WriteValue(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret_err*/)
+static int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
 {
-    const void *buf = nullptr;
-    size_t      len = 0;
+    auto       *self = static_cast<transport::BluezTransport *>(userdata);
+    const void *buf  = nullptr;
+    size_t      len  = 0;
 
     int r = sd_bus_message_read_array(m, 'y', &buf, &len);
     if (r < 0)
@@ -211,6 +216,9 @@ static int rx_WriteValue(sd_bus_message *m, void * /*userdata*/, sd_bus_error * 
     if (offset != 0)
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.InvalidOffset",
                                           "Offset %u not supported", offset);
+
+    if (self && buf && len != 0)
+        self->deliver_rx_bytes(static_cast<const uint8_t *>(buf), len);
 
     return sd_bus_reply_method_return(m, "");
 }
@@ -307,6 +315,18 @@ static inline bool mac_eq(std::string a, std::string b)
         return s;
     };
     return norm(std::move(a)) == norm(std::move(b));
+}
+
+static inline bool path_mac_eq(const std::string &obj_path, const std::string &mac)
+{
+    auto pos = obj_path.rfind("/dev_");
+    if (pos == std::string::npos)
+        return false;
+    std::string tail = obj_path.substr(pos + 5);
+    for (auto &c : tail)
+        if (c == '_')
+            c = ':';
+    return mac_eq(tail, mac);
 }
 
 static int read_var_s(sd_bus_message *m, std::string &out)
@@ -453,12 +473,31 @@ static int on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*re
     if ((r = sd_bus_message_exit_container(m)) < 0)
         return r;
 
-    if (!svc_hit)
-        return 0;
-
-    if (self->config().peer_addr && !self->config().peer_addr->empty())
+    bool has_peer = (self->config().peer_addr && !self->config().peer_addr->empty());
+    bool peer_ok  = (has_peer && !addr.empty() && mac_eq(addr, *self->config().peer_addr));
+    static const bool strict_peer = !!getenv("BITCHAT_PEER_STRICT") &&
+                                    std::string(getenv("BITCHAT_PEER_STRICT")) == "1";
+    LOG_DEBUG("[BLUEZ][central] iface-added decision: svc_hit=%d has_peer=%d addr=%s peer=%s "
+              "match=%d strict=%d",
+              (int)svc_hit, (int)has_peer, addr.empty() ? "?" : addr.c_str(),
+              has_peer ? self->config().peer_addr->c_str() : "-", (int)peer_ok, (int)strict_peer);
+    if (has_peer)
     {
-        if (addr.empty() || !mac_eq(addr, *self->config().peer_addr))
+        if (peer_ok)
+        {
+            // OK
+        }
+        else if (svc_hit && !strict_peer)
+        {
+            LOG_DEBUG("[BLUEZ][central] peer MAC mismatch but service UUID hit (likely RPA) -> "
+                      "accept");
+        }
+        else
+            return 0;
+    }
+    else
+    {
+        if (!svc_hit)
             return 0;
     }
 
@@ -491,6 +530,9 @@ static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*
     bool services_resolved_val = false;
     bool connected_hit         = false;
     bool connected_val         = false;
+    // Device1.UUIDs support
+    bool uuids_hit         = false;
+    bool uuids_has_service = false;
 
     bool        value_hit = false;
     const void *val_buf   = nullptr;
@@ -539,6 +581,18 @@ static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*
             if (r < 0)
                 return r;
         }
+        else if (key && strcmp(key, "UUIDs") == 0 && iface &&
+                 strcmp(iface, "org.bluez.Device1") == 0)
+        {
+            // variant(as) – list of service UUIDs
+            bool hit = false;
+            r        = var_as_has_uuid(m, self->config().svc_uuid, hit);
+            if (r < 0)
+                return r;
+            uuids_hit = true;
+            if (hit)
+                uuids_has_service = true;
+        }
         else if (key && strcmp(key, "Value") == 0 && iface &&
                  strcmp(iface, "org.bluez.GattCharacteristic1") == 0)
         {
@@ -575,6 +629,23 @@ static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*
 
     const char *path = sd_bus_message_get_path(m);
 
+    // If UUIDs arrived later and match our service, and we don't have a device yet,
+    // adopt this device only when no peer MAC filter is set
+    if (path && self->dev_path().empty() && uuids_hit && uuids_has_service)
+    {
+        bool has_peer = (self->config().peer_addr && !self->config().peer_addr->empty());
+        if (!has_peer)
+        {
+            const std::string dev_prefix = std::string("/org/bluez/") + self->config().adapter +
+                                           "/dev_";
+            if (std::string(path).rfind(dev_prefix, 0) == 0)
+            {
+                self->set_dev_path(path);
+                LOG_DEBUG("[BLUEZ][central] PropertiesChanged(UUIDs) picked device: %s", path);
+            }
+        }
+    }
+
     if (path && self->dev_path() == path && connected_hit)
     {
         if (connected_val && !self->connected())
@@ -593,11 +664,17 @@ static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*
     if (path && self->dev_path() == path && services_resolved_hit && services_resolved_val)
         LOG_DEBUG("[BLUEZ][central] ServicesResolved=true on %s", path);
 
-    if (value_hit && self->subscribed())
+    if (value_hit)
     {
         const std::string dev_prefix = self->dev_path() + "/";
         if (path && std::strncmp(path, dev_prefix.c_str(), dev_prefix.size()) == 0)
+        {
             LOG_DEBUG("[BLUEZ][central] notify on %s len=%zu", path ? path : "?", val_len);
+            if (val_buf && val_len)
+            {
+                self->deliver_rx_bytes(static_cast<const uint8_t *>(val_buf), val_len);
+            }
+        }
     }
 
     return 0;
@@ -611,16 +688,67 @@ static int on_connect_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*
 
     if (sd_bus_message_is_method_error(m, nullptr))
     {
-        const sd_bus_error *e = sd_bus_message_get_error(m);
-        LOG_ERROR("[BLUEZ][central] Device1.Connect failed: %s: %s",
-                  e && e->name ? e->name : "unknown", e && e->message ? e->message : "no message");
+        const sd_bus_error *e          = sd_bus_message_get_error(m);
+        const char         *ename      = (e && e->name) ? e->name : "unknown";
+        const char         *emsg       = (e && e->message) ? e->message : "no message";
+        uint32_t            backoff_ms = 2000;
+        if (strcmp(ename, "org.freedesktop.DBus.Error.NoReply") == 0 ||
+            strcmp(ename, "org.bluez.Error.InProgress") == 0 ||
+            (strcmp(ename, "org.bluez.Error.Failed") == 0 &&
+             (emsg && strstr(emsg, "already in progress"))))
+        {
+            backoff_ms = 5000;
+            LOG_WARN("[BLUEZ][central] Connect in progress/timeouts, backoff %ums: %s: %s",
+                     backoff_ms, ename, emsg);
+        }
+        else
+        {
+            LOG_ERROR("[BLUEZ][central] Device1.Connect failed, backoff %ums: %s: %s", backoff_ms,
+                      ename, emsg);
+        }
         self->set_connected(false);
+        self->set_subscribed(false);
+        // If the device object disappeared, clear dev_path so pump will re-scan
+        if (strcmp(ename, "org.freedesktop.DBus.Error.UnknownObject") == 0 ||
+            strcmp(ename, "org.freedesktop.DBus.Error.UnknownMethod") == 0)
+        {
+            self->set_dev_path("");
+            LOG_DEBUG("[BLUEZ][central] Cleared device path after UnknownObject/Method");
+        }
+        // set next_try time
+        uint64_t now_ms =
+            (uint64_t)std::chrono::duration_cast<
+                std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        self->set_next_connect_at_ms(now_ms + backoff_ms);
         return 1;
     }
 
     self->set_connected(true);
     LOG_INFO("[BLUEZ][central] Device connected: %s", self->dev_path().c_str());
     return 1;
+}
+
+static int on_iface_removed(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
+{
+    auto       *self = static_cast<transport::BluezTransport *>(userdata);
+    const char *obj  = nullptr;
+    int         r    = sd_bus_message_read(m, "o", &obj);
+    if (r < 0 || !obj)
+        return r < 0 ? r : -EINVAL;
+    r = sd_bus_message_skip(m, "as");
+    if (r < 0)
+        return r;
+
+    const std::string path(obj);
+    if (!self->dev_path().empty() && self->dev_path() == path)
+    {
+        self->set_connected(false);
+        self->set_subscribed(false);
+        self->set_dev_path("");
+        LOG_DEBUG("[BLUEZ][central] InterfacesRemoved -> cleared device %s", obj);
+    }
+    return 0;
 }
 
 #endif

@@ -54,6 +54,9 @@ class BluezTransport final : public ITransport
     bool               subscribed() const;
     void               set_subscribed(bool v);
     void               set_connect_inflight(bool v);
+    bool is_running() const noexcept { return running_.load(std::memory_order_relaxed); }
+    void deliver_rx_bytes(const uint8_t *data, size_t len);
+    void set_next_connect_at_ms(uint64_t new_ms);
 
 #if BITCHAT_HAVE_SDBUS
     void emit_tx_props_changed(const char *prop);

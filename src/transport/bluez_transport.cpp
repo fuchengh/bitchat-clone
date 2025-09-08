@@ -1,5 +1,6 @@
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <errno.h>
 #include <string>
 #include <thread>
@@ -49,14 +50,9 @@ static const sd_bus_vtable adv_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_PROPERTY("Type", "s", adv_prop_Type, 0, SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("ServiceUUIDs", "as", adv_prop_ServiceUUIDs, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("LocalName", "s", adv_prop_LocalName, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("IncludeTxPower",
-                    "b",
-                    adv_prop_IncludeTxPower,
-                    0,
-                    SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_METHOD("Release", "", "", adv_Release, SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_VTABLE_END};
+    // SD_BUS_PROPERTY("LocalName", "s", adv_prop_LocalName, 0, SD_BUS_VTABLE_PROPERTY_CONST),
+    // SD_BUS_PROPERTY("IncludeTxPower", "b", adv_prop_IncludeTxPower, 0, SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_METHOD("Release", "", "", adv_Release, SD_BUS_VTABLE_UNPRIVILEGED), SD_BUS_VTABLE_END};
 
 #endif
 
@@ -79,6 +75,8 @@ struct BluezTransport::Impl
 
     // central
     sd_bus_slot     *added_slot = nullptr;
+    sd_bus_slot     *removed_slot = nullptr;
+
     sd_bus_slot     *props_slot = nullptr;
     std::atomic_bool discovery_on{false};
     sd_bus_slot     *connect_call_slot{nullptr};
@@ -99,6 +97,7 @@ struct BluezTransport::Impl
     std::atomic_bool connected{false};
     std::atomic_bool subscribed{false};
     std::atomic_bool connect_inflight{false};
+    uint64_t         next_connect_at_ms{0};
 
     std::atomic_bool notifying{false};  // TX notify state
     std::string      unique_name;       // our bus unique name (debug)
@@ -172,6 +171,21 @@ std::string BluezTransport::name() const
     return "bluez";
 }
 
+void BluezTransport::deliver_rx_bytes(const uint8_t *data, size_t len)
+{
+    if (!data || len == 0)
+        return;
+    if (!is_running())
+        return;
+    if (!on_frame_)
+        return;
+
+    Frame f{};
+    f.resize(len);
+    std::memcpy(f.data(), data, len);
+    on_frame_(std::move(f));
+}
+
 bool BluezTransport::start(const Settings &s, OnFrame cb)
 {
     if (running_.load(std::memory_order_relaxed))
@@ -200,13 +214,101 @@ bool BluezTransport::start(const Settings &s, OnFrame cb)
     return ok;
 }
 
-bool BluezTransport::send(const Frame & /*frame*/)
+bool BluezTransport::send(const Frame &f)
 {
     if (!running_.load(std::memory_order_relaxed))
         return false;
-    // TODO: map Frame -> GATT Write
-    LOG_DEBUG("[BLUEZ] stub send (frame)");
+    if (f.empty())
+        return false;
+
+    // only send when role is central
+    if (cfg_.role == Role::Central)
+    {
+        const size_t len = f.size();
+        if (settings_.mtu_payload > 0 && len > settings_.mtu_payload)
+        {
+            LOG_WARN("[BLUEZ][central] send len=%zu > mtu_payload=%zu (sending anyway)", len,
+                     settings_.mtu_payload);
+        }
+        const bool ok = central_write(f.data(), len);
+        LOG_DEBUG("[BLUEZ][central] send len=%zu %s", len, ok ? "OK" : "FAIL");
+        return ok;
+    }
+
+#if BITCHAT_HAVE_SDBUS
+    if (!impl_ || !impl_->bus)
+    {
+        return false;
+    }
+    if (!tx_notifying())
+    {
+        // notifying not started yet, dropping send
+        LOG_DEBUG("[BLUEZ][peripheral] drop send (Notifying=false)");
+        return false;
+    }
+    sd_bus_message *sig = nullptr;
+    int             r   = sd_bus_message_new_signal(impl_->bus, &sig, impl_->tx_path.c_str(),
+                                                    "org.freedesktop.DBus.Properties", "PropertiesChanged");
+    if (r < 0)
+    {
+        LOG_WARN("[BLUEZ][peripheral] new PropertiesChanged failed: %s", strerror(-r));
+        return false;
+    }
+    // interface name
+    r = sd_bus_message_append(sig, "s", "org.bluez.GattCharacteristic1");
+    if (r < 0)
+        goto fail;
+    // a{sv} changed properties
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "{sv}");
+    if (r < 0)
+        goto fail;
+    // entry: "Value" -> variant "ay"
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_DICT_ENTRY, "sv");
+    if (r < 0)
+        goto fail;
+    r = sd_bus_message_append(sig, "s", "Value");
+    if (r < 0)
+        goto fail;
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_VARIANT, "ay");
+    if (r < 0)
+        goto fail;
+    r = sd_bus_message_append_array(sig, 'y', f.data(), f.size());
+    if (r < 0)
+        goto fail;
+    r = sd_bus_message_close_container(sig);  // variant
+    if (r < 0)
+        goto fail;
+    r = sd_bus_message_close_container(sig);  // dict entry
+    if (r < 0)
+        goto fail;
+    r = sd_bus_message_close_container(sig);  // a{sv}
+    if (r < 0)
+        goto fail;
+    // invalidated properties: empty 'as'
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "s");
+    if (r < 0)
+        goto fail;
+    r = sd_bus_message_close_container(sig);
+    if (r < 0)
+        goto fail;
+    // send
+    r = sd_bus_send(impl_->bus, sig, nullptr);
+    sd_bus_message_unref(sig);
+    if (r < 0)
+    {
+        LOG_WARN("[BLUEZ][peripheral] notify send failed: %s", strerror(-r));
+        return false;
+    }
+    LOG_DEBUG("[BLUEZ][peripheral] notify len=%zu sent", (size_t)f.size());
     return true;
+fail:
+    if (sig)
+        sd_bus_message_unref(sig);
+    LOG_WARN("[BLUEZ][peripheral] build PropertiesChanged(Value) failed: %s", strerror(-r));
+    return false;
+#else
+    return false;
+#endif
 }
 
 void BluezTransport::stop()
@@ -323,7 +425,8 @@ bool BluezTransport::start_peripheral()
                 if (pr <= 0)
                     break;
             }
-            sd_bus_wait(impl_->bus, UINT64_MAX);
+            const uint64_t WAIT_USEC = 300000;  // 300ms
+            sd_bus_wait(impl_->bus, WAIT_USEC);
         }
     });
 
@@ -402,13 +505,21 @@ bool BluezTransport::start_central()
     if (sd_bus_get_unique_name(impl_->bus, &name) >= 0 && name)
         impl_->unique_name = name;
 
-    // subscribe signals
+    // subscribe signals (iface added/removed)
     r = sd_bus_match_signal(impl_->bus, &impl_->added_slot, "org.bluez", "/",
                             "org.freedesktop.DBus.ObjectManager", "InterfacesAdded",
                             on_iface_added, this);
     if (r < 0)
     {
         LOG_ERROR("[BLUEZ][central] subscribe to InterfacesAdded failed: %d", r);
+        return false;
+    }
+    r = sd_bus_match_signal(impl_->bus, &impl_->removed_slot, "org.bluez", "/",
+                            "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved",
+                            on_iface_removed, this);
+    if (r < 0)
+    {
+        LOG_ERROR("[BLUEZ][central] subscribe to InterfacesRemoved failed: %d", r);
         return false;
     }
     // PropertiesChanged (Device1.ServicesResolved / GattCharacteristic1.Value etc.)
@@ -422,6 +533,76 @@ bool BluezTransport::start_central()
     }
     LOG_INFO("[BLUEZ][central] subscribed to InterfacesAdded/PropertiesChanged, svc=%s peer=%s",
              cfg_.svc_uuid.c_str(), cfg_.peer_addr ? cfg_.peer_addr->c_str() : "");
+
+    // restrict discovery to LE + our service UUID
+    sd_bus_message *msg = nullptr;
+    sd_bus_error    err{};
+    r = sd_bus_message_new_method_call(impl_->bus, &msg, "org.bluez", impl_->adapter_path.c_str(),
+                                       "org.bluez.Adapter1", "SetDiscoveryFilter");
+    if (r >= 0)
+        r = sd_bus_message_open_container(msg, SD_BUS_TYPE_ARRAY, "{sv}");
+    // Transport = "le"
+    if (r >= 0)
+        r = sd_bus_message_open_container(msg, SD_BUS_TYPE_DICT_ENTRY, "sv");
+    if (r >= 0)
+        r = sd_bus_message_append(msg, "s", "Transport");
+    if (r >= 0)
+        r = sd_bus_message_open_container(msg, SD_BUS_TYPE_VARIANT, "s");
+    if (r >= 0)
+        r = sd_bus_message_append(msg, "s", "le");
+    if (r >= 0)
+        r = sd_bus_message_exit_container(msg);  // variant
+    if (r >= 0)
+        r = sd_bus_message_exit_container(msg);  // dict
+    // UUIDs = [ svc_uuid ]
+    if (r >= 0)
+        r = sd_bus_message_open_container(msg, SD_BUS_TYPE_DICT_ENTRY, "sv");
+    if (r >= 0)
+        r = sd_bus_message_append(msg, "s", "UUIDs");
+    if (r >= 0)
+        r = sd_bus_message_open_container(msg, SD_BUS_TYPE_VARIANT, "as");
+    if (r >= 0)
+        r = sd_bus_message_open_container(msg, SD_BUS_TYPE_ARRAY, "s");
+    if (r >= 0)
+        r = sd_bus_message_append_basic(msg, 's', cfg_.svc_uuid.c_str());
+    if (r >= 0)
+        r = sd_bus_message_exit_container(msg);  // array
+    if (r >= 0)
+        r = sd_bus_message_exit_container(msg);  // variant
+    if (r >= 0)
+        r = sd_bus_message_exit_container(msg);  // dict
+    if (r >= 0)
+        r = sd_bus_message_exit_container(msg);  // a{sv}
+    if (r >= 0)
+    {
+        sd_bus_message *rep = nullptr;
+        r                   = sd_bus_call(impl_->bus, msg, 0, &err, &rep);
+        if (rep)
+            sd_bus_message_unref(rep);
+    }
+    if (msg)
+        sd_bus_message_unref(msg);
+    if (r < 0)
+    {
+        const char *ename = err.name ? err.name : "";
+        if (ename && (std::string(ename) == "org.bluez.Error.NotPermitted" ||
+                      std::string(ename) == "org.freedesktop.DBus.Error.AccessDenied"))
+        {
+            LOG_DEBUG("[BLUEZ][central] SetDiscoveryFilter not permitted: %s",
+                      err.message ? err.message : strerror(-r));
+        }
+        else
+        {
+            LOG_WARN("[BLUEZ][central] SetDiscoveryFilter failed: %s",
+                     err.message ? err.message : strerror(-r));
+        }
+    }
+    else
+    {
+        LOG_DEBUG("[BLUEZ][central] SetDiscoveryFilter: Transport=le, UUIDs=[%s]",
+                  cfg_.svc_uuid.c_str());
+    }
+    sd_bus_error_free(&err);
 
     (void)central_cold_scan();
 
@@ -440,7 +621,8 @@ bool BluezTransport::start_central()
             }
             // state pump
             central_pump();
-            sd_bus_wait(impl_->bus, UINT64_MAX);
+            const uint64_t WAIT_USEC = 300000;  // 300ms
+            sd_bus_wait(impl_->bus, WAIT_USEC);
         }
     });
 
@@ -452,6 +634,17 @@ void BluezTransport::stop_central()
 {
 // clang-format off
 #if BITCHAT_HAVE_SDBUS
+    // cleanup connected devices if any
+    if (impl_->bus && !impl_->dev_path.empty())
+    {
+        sd_bus_error    derr{};
+        sd_bus_message *drep = nullptr;
+        (void)sd_bus_call_method(impl_->bus, "org.bluez", impl_->dev_path.c_str(),
+                                 "org.bluez.Device1", "Disconnect", &derr, &drep, "");
+        if (drep) sd_bus_message_unref(drep);
+        sd_bus_error_free(&derr);
+    }
+
     // StopDiscovery if on
     if (impl_->bus && impl_->discovery_on.load())
     {
@@ -473,8 +666,10 @@ void BluezTransport::stop_central()
         impl_->loop.join();
 
     if (impl_->added_slot) { sd_bus_slot_unref(impl_->added_slot); impl_->added_slot = nullptr; }
+    if (impl_->removed_slot) { sd_bus_slot_unref(impl_->removed_slot); impl_->removed_slot = nullptr; }
     if (impl_->props_slot) { sd_bus_slot_unref(impl_->props_slot); impl_->props_slot = nullptr; }
     if (impl_->connect_call_slot) { sd_bus_slot_unref(impl_->connect_call_slot); impl_->connect_call_slot = nullptr; }
+    impl_->next_connect_at_ms = 0;
 
     impl_->connect_inflight.store(false);
     impl_->connected.store(false);
@@ -619,14 +814,23 @@ bool BluezTransport::central_cold_scan()
             goto out;  // {oa{sa{sv}}}
 
         // UUID hit + optional peer filter
-        if (svc_hit)
+        if (cfg_.peer_addr && !cfg_.peer_addr->empty())
         {
-            if (!cfg_.peer_addr || cfg_.peer_addr->empty() || mac_eq(addr, *cfg_.peer_addr))
+            bool ok = (!addr.empty() && mac_eq(addr, *cfg_.peer_addr));
+            if (!ok)
+                ok = path_mac_eq(path, *cfg_.peer_addr);
+            if (ok)
             {
                 found      = true;
                 found_path = std::move(path);
-                break;  // first match is enough
+                break;
             }
+        }
+        else if (svc_hit)
+        {
+            found      = true;
+            found_path = std::move(path);
+            break;
         }
     }
     if (r < 0)
@@ -709,8 +913,11 @@ void BluezTransport::set_connect_inflight(bool v)
 {
     impl_->connect_inflight.store(v);
 }
+void BluezTransport::set_next_connect_at_ms(uint64_t new_ms)
+{
+    impl_->next_connect_at_ms = new_ms;
+}
 
-// --- in bluez_transport.cpp ---
 bool BluezTransport::central_connect()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -721,6 +928,25 @@ bool BluezTransport::central_connect()
 
     if (impl_->connect_inflight.load() || connected())
         return true;
+
+    // Stop active discovery before connecting to avoid object churn/aborts
+    if (impl_->discovery_on.load())
+    {
+        sd_bus_error err{};
+        sd_bus_message *rep = nullptr;
+        int rr = sd_bus_call_method(impl_->bus, "org.bluez", impl_->adapter_path.c_str(),
+                                    "org.bluez.Adapter1", "StopDiscovery", &err, &rep, "");
+        if (rep)
+            sd_bus_message_unref(rep);
+        if (rr < 0)
+        {
+            LOG_WARN("[BLUEZ][central] StopDiscovery before Connect failed: %s",
+                     err.message ? err.message : strerror(-rr));
+        }
+        else
+            impl_->discovery_on.store(false);
+        sd_bus_error_free(&err);
+    }
 
     int r = sd_bus_call_method_async(impl_->bus, &impl_->connect_call_slot, "org.bluez",
                                      dev_path().c_str(), "org.bluez.Device1", "Connect",
@@ -1008,10 +1234,33 @@ void BluezTransport::central_pump()
         impl_->r_rx_path.clear();
     }
 
+    // If we don't have a device yet, try to pick one from current BlueZ objects.
+    if (dev_path().empty())
+    {
+        (void)central_cold_scan();
+    }
+
     // connect once when device is known
     if (!dev_path().empty() && !connected() && !impl_->connect_inflight.load())
     {
-        (void)central_connect();
+        uint64_t now_ms =
+            (uint64_t)std::chrono::duration_cast<
+                std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                .count();
+        if (now_ms >= impl_->next_connect_at_ms)
+        {
+            impl_->next_connect_at_ms = now_ms;
+            (void)central_connect();
+        }
+    }
+
+    // If device path disappeared after a failed connect, make sure discovery is running
+    if (dev_path().empty() && !impl_->discovery_on.load() && impl_->bus)
+    {
+        if (central_start_discovery())
+            LOG_INFO("[BLUEZ][central] Restart discovery");
+        else
+            LOG_WARN("[BLUEZ][central] Restart discovery failed");
     }
 
     // discover GATT then enable notify
