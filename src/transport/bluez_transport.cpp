@@ -81,10 +81,6 @@ struct BluezTransport::Impl
     sd_bus_slot     *added_slot = nullptr;
     sd_bus_slot     *props_slot = nullptr;
     std::atomic_bool discovery_on{false};
-    // central connection state flags
-    std::atomic_bool connected{false};
-    std::atomic_bool subscribed{false};
-    std::atomic_bool connect_inflight{false};
     sd_bus_slot     *connect_call_slot{nullptr};
 #endif
     std::thread loop;
@@ -99,6 +95,10 @@ struct BluezTransport::Impl
     std::string r_svc_path;  // remote service path
     std::string r_tx_path;   // remote TX characteristic (notify)
     std::string r_rx_path;   // remote RX characteristic (write)
+    // central connection state flags
+    std::atomic_bool connected{false};
+    std::atomic_bool subscribed{false};
+    std::atomic_bool connect_inflight{false};
 
     std::atomic_bool notifying{false};  // TX notify state
     std::string      unique_name;       // our bus unique name (debug)
