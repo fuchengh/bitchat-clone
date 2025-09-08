@@ -108,21 +108,36 @@ static int chr_prop_Flags(sd_bus * /*bus*/,
 {
     auto       *self = static_cast<transport::BluezTransport *>(userdata);
     std::string p(path);
-    const char *flag = nullptr;
-    if (p == self->tx_path())
-        flag = "notify";
-    else if (p == self->rx_path())
-        flag = "write";
-    else
-        return -EINVAL;
+    int         r;
 
-    int r = sd_bus_message_open_container(reply, 'a', "s");
-    if (r < 0)
-        return r;
-    r = sd_bus_message_append_basic(reply, 's', flag);
-    if (r < 0)
-        return r;
-    return sd_bus_message_close_container(reply);
+    if (p == self->tx_path())
+    {
+        r = sd_bus_message_open_container(reply, 'a', "s");
+        if (r < 0)
+            return r;
+        r = sd_bus_message_append_basic(reply, 's', "notify");
+        if (r < 0)
+            return r;
+        r = sd_bus_message_append_basic(reply, 's', "read");
+        if (r < 0)
+            return r;
+        return sd_bus_message_close_container(reply);
+    }
+    else if (p == self->rx_path())
+    {
+        // RX characteristic: write + write-without-response
+        r = sd_bus_message_open_container(reply, 'a', "s");
+        if (r < 0)
+            return r;
+        r = sd_bus_message_append_basic(reply, 's', "write");
+        if (r < 0)
+            return r;
+        r = sd_bus_message_append_basic(reply, 's', "write-without-response");
+        if (r < 0)
+            return r;
+        return sd_bus_message_close_container(reply);
+    }
+    return -EINVAL;
 }
 
 static int chr_prop_Notifying(sd_bus * /*bus*/,
@@ -477,10 +492,10 @@ static int on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*re
     bool peer_ok  = (has_peer && !addr.empty() && mac_eq(addr, *self->config().peer_addr));
     static const bool strict_peer = !!getenv("BITCHAT_PEER_STRICT") &&
                                     std::string(getenv("BITCHAT_PEER_STRICT")) == "1";
-    LOG_DEBUG("[BLUEZ][central] iface-added decision: svc_hit=%d has_peer=%d addr=%s peer=%s "
-              "match=%d strict=%d",
-              (int)svc_hit, (int)has_peer, addr.empty() ? "?" : addr.c_str(),
-              has_peer ? self->config().peer_addr->c_str() : "-", (int)peer_ok, (int)strict_peer);
+    // LOG_DEBUG("[BLUEZ][central] iface-added decision: svc_hit=%d has_peer=%d addr=%s peer=%s "
+    //           "match=%d strict=%d",
+    //           (int)svc_hit, (int)has_peer, addr.empty() ? "?" : addr.c_str(),
+    //           has_peer ? self->config().peer_addr->c_str() : "-", (int)peer_ok, (int)strict_peer);
     if (has_peer)
     {
         if (peer_ok)

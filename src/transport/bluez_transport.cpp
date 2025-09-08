@@ -2,9 +2,11 @@
 #include <cstdint>
 #include <cstring>
 #include <errno.h>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "transport/bluez_transport.hpp"
 #include "transport/itransport.hpp"
@@ -14,6 +16,10 @@
 #include <systemd/sd-bus.h>
 #include "bluez_helper.inc"
 
+std::mutex           g_tx_last_mu;
+std::vector<uint8_t> g_tx_last_value{};  // last value notified by TX char
+
+// clang-format off
 // GattService1 (svc_path)
 static const sd_bus_vtable svc_vtable[] = {
     SD_BUS_VTABLE_START(0),
@@ -50,11 +56,11 @@ static const sd_bus_vtable adv_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_PROPERTY("Type", "s", adv_prop_Type, 0, SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("ServiceUUIDs", "as", adv_prop_ServiceUUIDs, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    // SD_BUS_PROPERTY("LocalName", "s", adv_prop_LocalName, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    // SD_BUS_PROPERTY("IncludeTxPower", "b", adv_prop_IncludeTxPower, 0, SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("LocalName", "s", adv_prop_LocalName, 0, SD_BUS_VTABLE_PROPERTY_CONST),
+    SD_BUS_PROPERTY("IncludeTxPower", "b", adv_prop_IncludeTxPower, 0, SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_METHOD("Release", "", "", adv_Release, SD_BUS_VTABLE_UNPRIVILEGED), SD_BUS_VTABLE_END};
-
 #endif
+// clang-format on
 
 namespace transport
 {
@@ -246,6 +252,12 @@ bool BluezTransport::send(const Frame &f)
         LOG_DEBUG("[BLUEZ][peripheral] drop send (Notifying=false)");
         return false;
     }
+    // cache last value for ReadValue/Value property
+    {
+        std::lock_guard<std::mutex> lk(g_tx_last_mu);
+        g_tx_last_value.assign(f.begin(), f.end());
+    }
+
     sd_bus_message *sig = nullptr;
     int             r   = sd_bus_message_new_signal(impl_->bus, &sig, impl_->tx_path.c_str(),
                                                     "org.freedesktop.DBus.Properties", "PropertiesChanged");
