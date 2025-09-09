@@ -169,7 +169,7 @@ bool BluezTransport::has_uuid_discovery_filter() const
 #ifdef BITCHAT_HAVE_SDBUS
     return impl_ && impl_->uuid_filter_ok;
 #endif
-    return false
+    return false;
 }
 void BluezTransport::set_uuid_discovery_filter_ok(bool v)
 {
@@ -1273,7 +1273,7 @@ bool BluezTransport::central_write(const uint8_t *data, size_t len)
         return false;
     }
 
-    // append empty options a{sv}
+    // options a{sv}: enforce "type=request" (Write Request, expect ATT response) and offset=0
     r = sd_bus_message_open_container(msg, SD_BUS_TYPE_ARRAY, "{sv}");
     if (r < 0)
     {
@@ -1281,24 +1281,82 @@ bool BluezTransport::central_write(const uint8_t *data, size_t len)
         sd_bus_message_unref(msg);
         return false;
     }
-    r = sd_bus_message_close_container(msg);
+    // dict entry: "type" -> variant "s" = "request"
+    r = sd_bus_message_open_container(msg, SD_BUS_TYPE_DICT_ENTRY, "sv");
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_append(msg, "s", "type");
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_open_container(msg, SD_BUS_TYPE_VARIANT, "s");
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_append(msg, "s", "request");
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_close_container(msg);  //variatn
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_close_container(msg);  // dict-entry
+    if (r < 0)
+        goto build_opts_fail;
+    // dict entry: "offset" -> variant "q" = 0
+    r = sd_bus_message_open_container(msg, SD_BUS_TYPE_DICT_ENTRY, "sv");
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_append(msg, "s", "offset");
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_open_container(msg, SD_BUS_TYPE_VARIANT, "q");
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_append(msg, "q", (uint16_t)0);
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_close_container(msg);  //variant
+    if (r < 0)
+        goto build_opts_fail;
+    r = sd_bus_message_close_container(msg);  //dict-entry
+    if (r < 0)
+        goto build_opts_fail;
+    // close options map
+    r = sd_bus_message_close_container(msg);  // a{sv}
     if (r < 0)
     {
         LOG_WARN("[BLUEZ][central] WriteValue close a{sv} failed: %s", strerror(-r));
         sd_bus_message_unref(msg);
         return false;
     }
+    goto call_write;
+
+build_opts_fail:
+    LOG_WARN("[BLUEZ][central] WriteValue build options failed: %s", strerror(-r));
+    sd_bus_message_unref(msg);
+    return false;
+
+call_write:
     r = sd_bus_call(impl_->bus, msg, 0, &err, &rep);
     sd_bus_message_unref(msg);
     if (rep)
         sd_bus_message_unref(rep);
     if (r < 0)
     {
-        LOG_WARN("[BLUEZ][central] WriteValue failed: %s",
-                 err.message ? err.message : strerror(-r));
-        sd_bus_error_free(&err);
-        return false;
+        if (-r == EBADMSG)
+        {
+            // Some BlueZ builds can surface EBADMSG despite a successful ATT write.
+            LOG_INFO("[BLUEZ][central] WriteValue returned EBADMSG; treating as soft error "
+                     "(len=%zu)",
+                     len);
+        }
+        else
+        {
+            LOG_WARN("[BLUEZ][central] WriteValue failed: %s",
+                     err.message ? err.message : strerror(-r));
+            sd_bus_error_free(&err);
+            return false;
+        }
     }
+
     sd_bus_error_free(&err);
     LOG_DEBUG("[BLUEZ][central] WriteValue OK (len=%zu)", len);
     return true;
