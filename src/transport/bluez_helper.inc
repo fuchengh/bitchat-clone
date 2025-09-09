@@ -1,6 +1,7 @@
 // bluez helpers
 #include <cctype>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -11,6 +12,43 @@
 #if BITCHAT_HAVE_SDBUS
 #include <systemd/sd-bus.h>
 
+// ---- debug helpers ----
+static inline bool env_yes(const char *name)
+{
+    const char *v = std::getenv(name);
+    if (!v)
+        return false;
+    std::string s(v);
+    for (auto &c : s)
+        c = (char)std::tolower((unsigned char)c);
+    return (s == "1" || s == "true" || s == "yes" || s == "on");
+}
+
+static inline void log_hex_bytes(const char *tag, const void *buf, size_t len)
+{
+    const uint8_t *p = static_cast<const uint8_t *>(buf);
+    std::string    line;
+    line.reserve(len * 3);
+    char tmp[4]{};
+    for (size_t i = 0; i < len; ++i)
+    {
+        snprintf(tmp, sizeof(tmp), "%02x", p[i]);
+        line += tmp;
+        if (i + 1 < len)
+            line += ' ';
+    }
+    LOG_DEBUG("%s len=%zu: %s", tag, len, line.c_str());
+}
+
+static inline bool raw_sink_enabled()
+{
+    return env_yes("BITCHAT_GATT_RAW_SINK");
+}
+static inline bool raw_echo_enabled()
+{
+    return env_yes("BITCHAT_GATT_RAW_ECHO");
+}
+
 static int on_reg_app_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_error*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);
@@ -19,13 +57,11 @@ static int on_reg_app_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*
         const sd_bus_error *e = sd_bus_message_get_error(m);
         LOG_ERROR("[BLUEZ] RegisterApplication failed: %s: %s", e && e->name ? e->name : "unknown",
                   e && e->message ? e->message : "no message");
-        self->set_reg_ok(false);
     }
     else
     {
         LOG_DEBUG("[BLUEZ] GATT app registered at %s (bus=%s)", self->app_path().c_str(),
                   self->unique_name().c_str());
-        self->set_reg_ok(true);
     }
     return 1;
 }
@@ -118,9 +154,6 @@ static int chr_prop_Flags(sd_bus * /*bus*/,
         r = sd_bus_message_append_basic(reply, 's', "notify");
         if (r < 0)
             return r;
-        r = sd_bus_message_append_basic(reply, 's', "read");
-        if (r < 0)
-            return r;
         return sd_bus_message_close_container(reply);
     }
     else if (p == self->rx_path())
@@ -184,8 +217,7 @@ static int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
         return r;
     LOG_DEBUG("[BLUEZ] rx.WriteValue len=%zu", len);
 
-    uint16_t    offset = 0;
-    const char *type   = nullptr;
+    uint16_t offset = 0;
 
     r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sv}");
     if (r < 0)
@@ -207,14 +239,6 @@ static int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
             if ((r = sd_bus_message_exit_container(m)) < 0)
                 return r;
         }
-        else if (key && std::strcmp(key, "type") == 0)
-        {
-            if ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_VARIANT, "s")) < 0)
-                return r;
-            (void)sd_bus_message_read(m, "s", &type);
-            if ((r = sd_bus_message_exit_container(m)) < 0)
-                return r;
-        }
         else
         {
             if ((r = sd_bus_message_skip(m, "v")) < 0)
@@ -227,6 +251,25 @@ static int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
         return r;
     if ((r = sd_bus_message_exit_container(m)) < 0)
         return r;
+
+    // RAW test mode: sink/echo without touching parser
+    if (raw_echo_enabled() || raw_sink_enabled())
+    {
+        log_hex_bytes("[BLUEZ][peripheral] GATT RAW RX", buf, len);
+        if (raw_echo_enabled())
+        {
+            // echo back through TX notify path
+            using Frame = std::vector<std::uint8_t>;
+            Frame f;
+            f.resize(len);
+            if (len)
+                std::memcpy(f.data(), buf, len);
+            (void)self->send(f);  // will notify if Notifying=true
+            LOG_DEBUG("[BLUEZ][peripheral] RAW echo -> notify submitted");
+        }
+        // DO NOT feed parser in RAW modes
+        return sd_bus_reply_method_return(m, "");
+    }
 
     if (offset != 0)
         return sd_bus_reply_method_errorf(m, "org.bluez.Error.InvalidOffset",
@@ -420,11 +463,11 @@ static int on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*re
         if ((r = sd_bus_message_read(m, "s", &iface)) < 0)
             return r;
 
-        if ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sv}")) < 0)
-            return r;
-
         if (iface && strcmp(iface, "org.bluez.Device1") == 0)
         {
+            if ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sv}")) < 0)
+                return r;
+
             while ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_DICT_ENTRY, "sv")) > 0)
             {
                 const char *key = nullptr;
@@ -470,6 +513,8 @@ static int on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*re
                     break;
                 }
             }
+            if ((r = sd_bus_message_exit_container(m)) < 0)
+                return r;
         }
         else
         {
@@ -487,6 +532,9 @@ static int on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*re
         return r;
     if ((r = sd_bus_message_exit_container(m)) < 0)
         return r;
+
+    if (!svc_hit && self->has_uuid_discovery_filter())
+        svc_hit = true;
 
     bool has_peer = (self->config().peer_addr && !self->config().peer_addr->empty());
     bool peer_ok  = (has_peer && !addr.empty() && mac_eq(addr, *self->config().peer_addr));
@@ -677,17 +725,35 @@ static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*
     }
 
     if (path && self->dev_path() == path && services_resolved_hit && services_resolved_val)
+    {
+        self->set_services_resolved(true);
         LOG_DEBUG("[BLUEZ][central] ServicesResolved=true on %s", path);
+        (void)self->central_find_gatt_paths();
+        (void)self->central_enable_notify();
+    }
+    else if (path && self->dev_path() == path && services_resolved_hit && !services_resolved_val)
+    {
+        self->set_services_resolved(false);
+        LOG_DEBUG("[BLUEZ][central] ServicesResolved=false on %s", path);
+    }
 
     if (value_hit)
     {
         const std::string dev_prefix = self->dev_path() + "/";
         if (path && std::strncmp(path, dev_prefix.c_str(), dev_prefix.size()) == 0)
         {
-            LOG_DEBUG("[BLUEZ][central] notify on %s len=%zu", path ? path : "?", val_len);
-            if (val_buf && val_len)
+            if (raw_sink_enabled())
             {
-                self->deliver_rx_bytes(static_cast<const uint8_t *>(val_buf), val_len);
+                // test mode: just log hex, don't feed parser
+                log_hex_bytes("[BLUEZ][central] GATT RAW notify", val_buf, val_len);
+            }
+            else
+            {
+                LOG_DEBUG("[BLUEZ][central] notify on %s len=%zu", path ? path : "?", val_len);
+                if (val_buf && val_len)
+                {
+                    self->deliver_rx_bytes(static_cast<const uint8_t *>(val_buf), val_len);
+                }
             }
         }
     }
@@ -741,6 +807,7 @@ static int on_connect_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*
 
     self->set_connected(true);
     LOG_INFO("[BLUEZ][central] Device connected: %s", self->dev_path().c_str());
+    (void)self->central_discover_services(/*force_all=*/false);
     return 1;
 }
 

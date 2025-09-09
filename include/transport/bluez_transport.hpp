@@ -47,7 +47,6 @@ class BluezTransport final : public ITransport
     const std::string &unique_name() const;
     bool               tx_notifying() const;
     void               set_tx_notifying(bool v);
-    void               set_reg_ok(bool v);
     void               set_dev_path(const char *path);
     bool               connected() const;
     void               set_connected(bool v);
@@ -57,6 +56,14 @@ class BluezTransport final : public ITransport
     bool is_running() const noexcept { return running_.load(std::memory_order_relaxed); }
     void deliver_rx_bytes(const uint8_t *data, size_t len);
     void set_next_connect_at_ms(uint64_t new_ms);
+    bool               services_resolved() const;
+    void               set_services_resolved(bool v);
+    bool               has_uuid_discovery_filter() const;
+    void               set_uuid_discovery_filter_ok(bool v);
+
+    bool central_enable_notify();
+    bool central_find_gatt_paths();
+    bool central_discover_services(bool force_all = false);
 
 #if BITCHAT_HAVE_SDBUS
     void emit_tx_props_changed(const char *prop);
@@ -79,9 +86,8 @@ class BluezTransport final : public ITransport
     bool central_cold_scan();
     bool central_start_discovery();
     bool central_connect();
-    bool central_find_gatt_paths();
-    bool central_enable_notify();
     bool central_write(const uint8_t *data, size_t len);
+    bool central_set_discovery_filter();
     void central_pump();
 };
 
