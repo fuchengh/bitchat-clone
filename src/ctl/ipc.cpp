@@ -79,13 +79,8 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
     addr.sun_family = AF_UNIX;
     std::strncpy(addr.sun_path, sock_path.c_str(), sizeof(addr.sun_path) - 1);
     addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
-#ifdef __APPLE__
-    addr.sun_len       = static_cast<uint8_t>(SUN_LEN(&addr));
-    socklen_t addr_len = static_cast<socklen_t>(SUN_LEN(&addr));
-#else
     socklen_t addr_len = static_cast<socklen_t>(offsetof(struct sockaddr_un, sun_path) +
                                                 std::strlen(addr.sun_path) + 1);
-#endif
 
     if (bind(fd, reinterpret_cast<sockaddr *>(&addr), addr_len) == -1)
     {
@@ -105,7 +100,7 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
         return false;
     }
 
-    LOG_INFO("Listening on %s", sock_path.c_str());
+    LOG_DEBUG("Listening on %s", sock_path.c_str());
 
     while (1)
     {
@@ -125,10 +120,6 @@ bool start_server(const std::string &sock_path, void (*on_line)(const std::strin
         int aflags = fcntl(newfd, F_GETFD, 0);
         if (aflags != -1)
             fcntl(newfd, F_SETFD, aflags | FD_CLOEXEC);
-#ifdef __APPLE__
-        int one = 1;
-        setsockopt(newfd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-#endif
         std::string line;
         char        buf[256];
         bool        ok = true;
@@ -211,15 +202,8 @@ bool send_line(const std::string &sock_path, const std::string &line)
     addr.sun_family = AF_UNIX;
     std::strncpy(addr.sun_path, sock_path.c_str(), sizeof(addr.sun_path) - 1);
     addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
-#ifdef __APPLE__
-    addr.sun_len       = static_cast<uint8_t>(SUN_LEN(&addr));
-    socklen_t addr_len = static_cast<socklen_t>(SUN_LEN(&addr));
-    int       one      = 1;
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-#else
     socklen_t addr_len = static_cast<socklen_t>(offsetof(struct sockaddr_un, sun_path) +
                                                 std::strlen(addr.sun_path) + 1);
-#endif
 
     // connect
     if (connect(fd, reinterpret_cast<sockaddr *>(&addr), addr_len) == -1)
@@ -237,11 +221,8 @@ bool send_line(const std::string &sock_path, const std::string &line)
     size_t      sent = 0;
     while (sent < len)
     {
-#ifdef __APPLE__
-        ssize_t n = send(fd, buf + sent, len - sent, 0);
-#else
         ssize_t n = send(fd, buf + sent, len - sent, MSG_NOSIGNAL);
-#endif
+
         if (n > 0)
         {
             sent += static_cast<size_t>(n);

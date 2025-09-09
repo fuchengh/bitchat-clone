@@ -46,13 +46,13 @@ inline const char *level_name(Level lv)
     switch (lv)
     {
         case Level::Debug:
-            return "DEBUG";
+            return "[DEBUG]";
         case Level::Info:
-            return "INFO";
+            return "[INFO]";
         case Level::Warning:
-            return "WARN";
+            return "[WARN]";
         case Level::Error:
-            return "ERROR";
+            return "[ERROR]";
     }
     return "?";
 }
@@ -77,7 +77,7 @@ inline void logf(Level lv, const char *func, const char *fmt, ...)
     char ts[16];
     timestamp(ts, sizeof(ts));
 
-    std::fprintf(stderr, "%s| [%s] %s: ", ts, level_name(lv), func ? func : "?");
+    std::fprintf(stderr, "%s| %-7s| %s: ", ts, level_name(lv), func ? func : "?");
 
     va_list ap;
     va_start(ap, fmt);

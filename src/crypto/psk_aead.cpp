@@ -15,7 +15,7 @@ static_assert(aead::NONCE_SIZE == crypto_aead_xchacha20poly1305_ietf_NPUBBYTES,
               "nonce size mismatch");
 static_assert(aead::TAG_SIZE == crypto_aead_xchacha20poly1305_ietf_ABYTES, "tag size mismatch");
 
-static bool ensure_sodium_init()
+[[maybe_unused]] static bool ensure_sodium_init()
 {
     static int ok = (sodium_init() >= 0);  // -1 means failed
     return ok;

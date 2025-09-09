@@ -20,10 +20,11 @@ struct Settings
 
 struct ITransport
 {
-    virtual bool start(const Settings &s, OnFrame on_rx) = 0;
-    virtual bool send(const Frame &one_chunk)            = 0;  // chunk == 1 BLE write
-    virtual void stop()                                  = 0;
-    virtual ~ITransport()                                = default;
+    virtual bool        start(const Settings &s, OnFrame on_rx) = 0;
+    virtual bool        send(const Frame &one_chunk)            = 0;  // chunk == 1 BLE write
+    virtual void        stop()                                  = 0;
+    virtual std::string name() const { return ""; }
+    virtual ~ITransport() = default;
 };
 
 }  // namespace transport

@@ -1,16 +1,41 @@
 #include <cassert>
 #include <string>
+#include <memory>
 
 #include "app/chat_service.hpp"
 #include "crypto/psk_aead.hpp"
 #include "ctl/ipc.hpp"
+#include "transport/bluez_transport.hpp"
 #include "transport/loopback_transport.hpp"
 #include "util/constants.hpp"
 #include "util/log.hpp"
 
-static transport::LoopbackTransport   g_tx;
 static std::unique_ptr<aead::PskAead> g_aead;
 static app::ChatService              *g_chat;
+
+std::unique_ptr<transport::ITransport> make_transport_from_env()
+{
+    const char *t = std::getenv("BITCHAT_TRANSPORT");
+    if (t && std::strcmp(t, "bluez") == 0)
+    {
+        transport::BluezConfig cfg;
+        // role: default Peripheral
+        if (const char *r = std::getenv("BITCHAT_ROLE"))
+        {
+            if (std::strcmp(r, "central") == 0)
+                cfg.role = transport::Role::Central;
+            else
+                cfg.role = transport::Role::Peripheral;
+        }
+        if (const char *a = std::getenv("BITCHAT_ADAPTER"))
+            cfg.adapter = a;
+        if (const char *p = std::getenv("BITCHAT_PEER"))
+            cfg.peer_addr = std::string{p};
+        return std::make_unique<transport::BluezTransport>(std::move(cfg));
+    }
+    // default - loopback
+    return std::make_unique<transport::LoopbackTransport>();
+}
 
 static void on_line(const std::string &line)
 {
@@ -47,6 +72,9 @@ static void on_line(const std::string &line)
 
 int main()
 {
+    // Bind transport from env var
+    auto tx = make_transport_from_env();
+
     // AEAD: prefer Sodium key if env is set, else Noop
     if (auto s = aead::SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX"))
     {
@@ -60,7 +88,7 @@ int main()
     }
 
     // chat service
-    app::ChatService chat(g_tx, *g_aead, /*mtu_payload*/ 100);
+    app::ChatService chat(*tx, *g_aead, /*mtu_payload*/ 100);
     if (!chat.start())
     {
         LOG_ERROR("ChatService start failed");
@@ -69,7 +97,7 @@ int main()
     g_chat = &chat;
 
     // IPC server
-    const std::string sock = ipc::expand_user(std::string(constants::kCtlSock));
+    const std::string sock = ipc::expand_user(std::string(constants::CTL_SOCK_PATH));
     if (!ipc::start_server(sock, &on_line))
     {
         LOG_ERROR("start_server failed");
