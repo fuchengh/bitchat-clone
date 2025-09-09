@@ -166,12 +166,18 @@ void BluezTransport::set_services_resolved(bool v)
 }
 bool BluezTransport::has_uuid_discovery_filter() const
 {
+#ifdef BITCHAT_HAVE_SDBUS
     return impl_ && impl_->uuid_filter_ok;
+#endif
+    return false
 }
 void BluezTransport::set_uuid_discovery_filter_ok(bool v)
 {
+#ifdef BITCHAT_HAVE_SDBUS
     if (impl_)
         impl_->uuid_filter_ok = v;
+#endif
+    (void)v;
 }
 
 #if BITCHAT_HAVE_SDBUS
