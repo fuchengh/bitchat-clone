@@ -176,8 +176,9 @@ void BluezTransport::set_uuid_discovery_filter_ok(bool v)
 #ifdef BITCHAT_HAVE_SDBUS
     if (impl_)
         impl_->uuid_filter_ok = v;
-#endif
+#else
     (void)v;
+#endif
 }
 
 #if BITCHAT_HAVE_SDBUS
