@@ -94,7 +94,7 @@ int main(int argc, char **argv)
     }
 
     // parse options (only --sock)
-    std::string              sock = ipc::expand_user(std::string(constants::CTL_SOCK_PATH));
+    std::string              sock = ipc::expand_user(constants::ctl_sock_path());
     std::vector<std::string> args;
     args.reserve(argc - 1);
 
