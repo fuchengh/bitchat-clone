@@ -1,106 +1,146 @@
 # BitChat-clone
 
-Minimal BLE 1:1 E2E-encrypted messenger (Linux + BlueZ).
-With features:
+Minimal BLE 1:1 end-to-end encrypted messenger (Linux + BlueZ).
 
+**Features**
+- Minimal TUI (Textual) that runs both daemons and shows chats
 - CLI <-> daemon IPC
-- Fragmentation over small MTU-links
-- AEAD (XChaCha20-Poly1305)
-- BlueZ/BLE wiring (TODO)
+- Fragmentation over small MTU links (12-byte header)
+- Encrpytion: AEAD with XChaCha20-Poly1305 (PSK)
+- BlueZ/BLE transport
 
-## Build
+---
 
-Install libsodium first:
+## Dependencies (Ubuntu/Debian)
 
-- **MacOS**
-
-```bash
-brew install libsodium
-```
-
-- **Ubuntu**
-
+For build dependencies:
 ```bash
 sudo apt-get update
-sudo apt-get install -y libsodium-dev pkg-config
+sudo apt-get install -y \
+  build-essential cmake pkg-config \
+  libsodium-dev libsystemd-dev \
+  bluez
 ```
 
-Configure and build
+Python (for TUI):
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install textual rich
+```
+
+> If your system `virtualenv` complains about platformdirs, using a fresh `.venv` as above isolates it.
+
+## Build
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build -j
 ```
 
-PS: BlueZ transport is Linux-only and currently not built by default
+- BlueZ transport is enabled automatically when `libsystemd-dev` is present.
+- Binary executables in `build/bin/`
 
 ## What runs
 
-- Daemon: `build/bin/bitchatd`
-- CLI: `build/bin/bitchatctl`
+- TUI (spawns two daemons, central & peripheral): `tui_bitchat.py`
+- Daemon: build/bin/bitchatd
+- CLI: build/bin/bitchatctl
+
+Default control socket (when started manually): `~/.cache/bitchat-clone/ctl.sock`
+> TUI uses role-specific sockets:  ~/.cache/bitchat-clone/central.sock, ~/.cache/bitchat-clone/peripheral.sock
+
+## Quickstart (recommended): TUI
 
 ```bash
-Usage:
-  bitchatctl [--sock <path>] <command> [args]
+# 1) Activate the venv (once per shell)
+source .venv/bin/activate
+
+# 2) Run the TUI (spawns bitchatd central & peripheral, manages cleanup)
+python ./tui_bitchat.py
+```
+
+- Left panel = discovered peers.
+- Middle = chat window.
+- Input is disabled until a peer is selected and central is `ready`.
+- Top bar shows: My ID and BLE status.
+- Press q (or ctrl-q) to quit.
+
+Optional env vars before launching:
+```bash
+export BITCHAT_PSK_HEX="$(openssl rand -hex 32)"   # enable AEAD (recommended)
+export BITCHAT_LOCAL_ID="my-device"                # override top bar ID
+export BITCHAT_LOG_LEVEL=INFO                      # DEBUG/INFO/WARN/ERROR
+# export BITCHAT_ADAPTER=hci0                      # if you don't use hci0
+```
+> Ensure bluetoothd is running on your system.
+
+## Quickstart (manual, without TUI)
+Terminal A - start daemon:
+```bash
+BITCHAT_ROLE=peripheral BITCHAT_TRANSPORT=bluez \
+BITCHAT_CTL_SOCK=/tmp/bitchat-peripheral.sock \
+./build/bin/bitchatd
+```
+
+Terminal B — start the other role:
+```bash
+BITCHAT_ROLE=central BITCHAT_TRANSPORT=bluez \
+BITCHAT_CTL_SOCK=/tmp/bitchat-central.sock \
+./build/bin/bitchatd
+```
+
+Terminal C — talk to central:
+```
+./build/bin/bitchatctl --sock /tmp/bitchat-central.sock tail on
+./build/bin/bitchatctl --sock /tmp/bitchat-central.sock send "hello"
+./build/bin/bitchatctl --sock /tmp/bitchat-central.sock quit
+```
+
+CLI Usage
+```bash
+bitchatctl [--sock <path>] <command> [args]
 
 Commands:
   send <text...>   # send one line of text
-  tail on|off      # toggle printing of received messages
+  tail on|off      # toggle printing of received messages in daemon logs
   quit             # ask daemon to exit
 ```
 
-- Default socket path: `~/.cache/bitchat-clone/ctl.sock`
-  - Created by the daemon automatically; CLI can override via `--sock <file>`
-
-## Quickstart
-
-```bash
-# 1. Terminal A — start daemon:
-./build/bin/bitchatd
-
-# 2. Terminal B — talk to it:
-./build/bin/bitchatctl tail off
-./build/bin/bitchatctl send "should be silent" # no [RECV]
-./build/bin/bitchatctl tail on
-./build/bin/bitchatctl send "now visible"      # daemon prints: [RECV] now visible
-./build/bin/bitchatctl quit
-```
-
-Expected daemon logs (abridged):
-
-```text
-[INFO] main: Using {SodiumPskAead (key from BITCHAT_PSK_HEX) | NoopPskAead (plaintext)}
-[INFO] start_server: Listening on ~/.cache/bitchat-clone/ctl.sock
-[INFO] on_line: TAIL Disabled
-[INFO] on_line: CMD: SEND should be silent
-# (no [RECV])
-[INFO] on_line: TAIL Enabled
-[INFO] on_line: CMD: SEND now visible
-[INFO] on_rx: [RECV] now visible
-[INFO] on_line: Received QUIT command, exiting...
-```
-
-Note: printing of [RECV] ... is gated by tail on.
-
 ## Security (AEAD)
+By default the daemon uses a Noop AEAD (plaintext) for testing.
 
-By default the app uses a Noop AEAD (plaintext) so you can test the full pipeline without keys.
-
-Set a PSK to enable XChaCha20-Poly1305:
-
+Enable `XChaCha20-Poly1305` with a 32-byte PSK:
 ```bash
 export BITCHAT_PSK_HEX="$(openssl rand -hex 32)"
 ./build/bin/bitchatd
 ```
 
-- Env var: BITCHAT_PSK_HEX = 64-hex chars (32 bytes)
-- Ciphertext wire format: `[24B nonce | ciphertext||tag]`
-- AEAD is applied **before** fragmentation; reassembly happens **before** decryption.
+- `BITCHAT_PSK_HEX` = 64 hex chars (32 bytes).
+- Wire format: `[24B nonce | ciphertext || tag]`.
+- AEAD is applied **before** fragmentation. Reassembly happens **before** decryption.
+> ⚠️ Without `BITCHAT_PSK_HEX`, traffic is **not** encrypted
 
-> ⚠️ Without BITCHAT_PSK_HEX, traffic is not encrypted (dev mode only).
+## Expected daemon log snippets (with BlueZ enabled)
+
+Central:
+```bash
+[INFO]  [BLUEZ][central] StartDiscovery OK on /org/bluez/hci0
+[DEBUG] [BLUEZ][central] found /org/bluez/hci0/dev_XX addr=AA:BB:CC:DD:EE:FF (svc hit)
+[INFO]  [BLUEZ][central] Device connected: /org/bluez/hci0/dev_...
+[INFO]  [BLUEZ][central] Notifications enabled on .../char...
+[DEBUG] [BLUEZ][central] Notifications enabled; ready
+```
+
+Peripheral:
+```bash
+[DEBUG] [BLUEZ] tx.StartNotify
+[DEBUG] [BLUEZ] rx.WriteValue len=...
+[INFO]  [RECV] hello world
+```
 
 ## Design sketch
-
 ```text
 bitchatctl
    │  (AF_UNIX line-based IPC)
@@ -109,15 +149,12 @@ bitchatd on_line()
    │
    ▼
 ChatService
-   ├─ AEAD.seal/open (default XChaCha20-Poly1305)
-   ├─ frag.make_chunks / Reassembler (12-byte header)
-   └─ transport (loopback for dev, BlueZ on Linux)
+   ├─ AEAD.seal/open (XChaCha20-Poly1305)
+   ├─ frag.make_chunks / reassembler (12-byte header)
+   └─ transport (BlueZ)
 ```
 
 ## Tests
-
-Build and run test
-
 ```bash
 ctest --test-dir build --output-on-failure
 ```

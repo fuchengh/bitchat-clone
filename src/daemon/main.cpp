@@ -97,7 +97,7 @@ int main()
     g_chat = &chat;
 
     // IPC server
-    const std::string sock = ipc::expand_user(std::string(constants::CTL_SOCK_PATH));
+    const std::string sock = ipc::expand_user(constants::ctl_sock_path());
     if (!ipc::start_server(sock, &on_line))
     {
         LOG_ERROR("start_server failed");

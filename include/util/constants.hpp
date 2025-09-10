@@ -1,6 +1,9 @@
 #pragma once
 #include <cstddef>
+#include <string>
 #include <string_view>
+
+#include "util/log.hpp"
 
 namespace constants
 {
@@ -11,5 +14,18 @@ inline constexpr std::string_view RX_UUID =
     "7e0f8f22-cc0b-4c6e-8a3e-5d21b2f8a9c4";  // Write w/ response
 
 // Control socket path (Unix domain socket)
-inline constexpr std::string_view CTL_SOCK_PATH = "~/.cache/bitchat-clone/ctl.sock";
+[[maybe_unused]] static std::string ctl_sock_path()
+{
+    if (const char *p = std::getenv("BITCHAT_CTL_SOCK"); p && *p)
+    {
+        return std::string(p);
+    }
+    // fallback to default
+    const char *home = std::getenv("HOME");
+    std::string base = home && *home ? std::string(home) : "/tmp";
+    std::string sock_path = base + "/.cache/bitchat-clone/ctl.sock";
+    LOG_INFO("Listening on %s", sock_path.c_str());
+    return sock_path;
+}
+
 }  // namespace constants

@@ -54,3 +54,6 @@ bitchatctl
 !.vscode/extensions.json
 
 daemon.log
+
+# Python
+.venv
