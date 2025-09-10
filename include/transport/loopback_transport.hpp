@@ -1,8 +1,5 @@
 #pragma once
 #include <cstddef>
-#include <cstdint>
-#include <vector>
-#include <functional>
 
 #include "transport/itransport.hpp"
 
@@ -13,6 +10,7 @@ public:
   bool start(const Settings& s, OnFrame on_rx) override;
   bool send(const Frame& one_chunk) override;  // one BLE write-sized chunk
   void stop() override;
+  bool link_ready() const override;
 
 private:
   OnFrame     on_rx_{};
