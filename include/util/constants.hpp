@@ -3,6 +3,8 @@
 #include <string>
 #include <string_view>
 
+#include "util/log.hpp"
+
 namespace constants
 {
 // UUIDs (RFC4122 v4) — fixed for bitchat-clone MVP-Lite
@@ -21,7 +23,9 @@ inline constexpr std::string_view RX_UUID =
     // fallback to default
     const char *home = std::getenv("HOME");
     std::string base = home && *home ? std::string(home) : "/tmp";
-    return base + "/.cache/bitchat-clone/ctl.sock";
+    std::string sock_path = base + "/.cache/bitchat-clone/ctl.sock";
+    LOG_INFO("Listening on %s", sock_path.c_str());
+    return sock_path;
 }
 
 }  // namespace constants

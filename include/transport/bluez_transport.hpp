@@ -67,6 +67,7 @@ class BluezTransport final : public ITransport
 
 #if BITCHAT_HAVE_SDBUS
     void emit_tx_props_changed(const char *prop);
+    bool peripheral_notify_ay_from_bus_thread(const uint8_t *data, size_t len);
 #endif
 
   private:

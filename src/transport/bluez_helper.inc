@@ -260,14 +260,10 @@ static int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
         log_hex_bytes("[BLUEZ][peripheral] GATT RAW RX", buf, len);
         if (raw_echo_enabled())
         {
-            // echo back through TX notify path
-            using Frame = std::vector<std::uint8_t>;
-            Frame f;
-            f.resize(len);
-            if (len)
-                std::memcpy(f.data(), buf, len);
-            (void)self->send(f);  // will notify if Notifying=true
-            LOG_DEBUG("[BLUEZ][peripheral] RAW echo -> notify submitted");
+            // Echo back via TX notify path WITHOUT taking the mutex (we are in bus thread).
+            (void)self->peripheral_notify_ay_from_bus_thread(static_cast<const uint8_t *>(buf),
+                                                             len);
+            LOG_DEBUG("[BLUEZ][peripheral] RAW echo -> notify submitted (bus-thread)");
         }
         // DO NOT feed parser in RAW modes
         return sd_bus_reply_method_return(m, "");
@@ -730,8 +726,6 @@ static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*
     {
         self->set_services_resolved(true);
         LOG_DEBUG("[BLUEZ][central] ServicesResolved=true on %s", path);
-        (void)self->central_find_gatt_paths();
-        (void)self->central_enable_notify();
     }
     else if (path && self->dev_path() == path && services_resolved_hit && !services_resolved_val)
     {
@@ -809,7 +803,7 @@ static int on_connect_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*
 
     self->set_connected(true);
     LOG_INFO("[BLUEZ][central] Device connected: %s", self->dev_path().c_str());
-    (void)self->central_discover_services(/*force_all=*/false);
+    self->set_services_resolved(false);
     return 1;
 }
 
