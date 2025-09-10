@@ -1,5 +1,4 @@
 #include "transport/loopback_transport.hpp"
-#include "util/log.hpp"
 
 namespace transport
 {
@@ -26,6 +25,11 @@ void LoopbackTransport::stop()
 {
     started_ = false;
     on_rx_   = nullptr;
+}
+
+bool LoopbackTransport::link_ready() const
+{
+    return true;
 }
 
 }  // namespace transport

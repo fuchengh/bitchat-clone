@@ -65,6 +65,8 @@ class BluezTransport final : public ITransport
     bool central_find_gatt_paths();
     bool central_discover_services(bool force_all = false);
 
+    bool link_ready() const override;
+
 #if BITCHAT_HAVE_SDBUS
     void emit_tx_props_changed(const char *prop);
     bool peripheral_notify_ay_from_bus_thread(const uint8_t *data, size_t len);
