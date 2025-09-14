@@ -21,11 +21,13 @@ import io
 
 # ======================= Domain state =======================
 
+
 @dataclass
 class Message:
     ts: datetime
-    direction: str   # "in" | "out" | "sys"
+    direction: str  # "in" | "out" | "sys"
     text: str
+
 
 @dataclass
 class Peer:
@@ -34,6 +36,7 @@ class Peer:
     is_connected: bool = False
     history: List[Message] = field(default_factory=list)
     last_seen: Optional[datetime] = None
+
 
 class ChatState:
     def __init__(self):
@@ -56,7 +59,9 @@ class ChatState:
         p = self.upsert_peer(peer_id)
         p.history.append(msg)
 
+
 # ======================= Small helpers =======================
+
 
 def detect_local_id(adapter: str = "hci0") -> str:
     """Return a human-readable local ID: env override -> sysfs MAC -> hciconfig -> hostname."""
@@ -70,13 +75,16 @@ def detect_local_id(adapter: str = "hci0") -> str:
     except Exception:
         pass
     try:
-        out = subprocess.check_output(["hciconfig", adapter], text=True, stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(
+            ["hciconfig", adapter], text=True, stderr=subprocess.DEVNULL
+        )
         m = re.search(r"BD Address:\s*([0-9A-F:]{17})", out, re.I)
         if m:
             return m.group(1)
     except Exception:
         pass
     return os.uname().nodename
+
 
 async def run_bitchatctl(sock_path: str, *args: str) -> None:
     """Run bitchatctl against a given AF_UNIX socket with args like ('send', 'hello')."""
@@ -88,12 +96,17 @@ async def run_bitchatctl(sock_path: str, *args: str) -> None:
     out, _ = await p.communicate()
     if p.returncode != 0:
         msg = out.decode(errors="replace").strip()
-        raise RuntimeError(f"bitchatctl {' '.join(args)} failed ({p.returncode}): {msg}")
+        raise RuntimeError(
+            f"bitchatctl {' '.join(args)} failed ({p.returncode}): {msg}"
+        )
+
 
 # ======================= Daemon manager =======================
 
+
 class DaemonProc:
     """Wraps one bitchatd instance and ensures forceful cleanup on exit."""
+
     def __init__(self, role: str, sock: str, env_extra: dict):
         self.role = role
         self.sock = os.path.expanduser(sock)
@@ -107,12 +120,14 @@ class DaemonProc:
     async def start(self):
         os.makedirs(os.path.dirname(self.sock), exist_ok=True)
         env = os.environ.copy()
-        env.update({
-            "BITCHAT_TRANSPORT": "bluez",
-            "BITCHAT_ROLE": self.role,
-            "BITCHAT_CTL_SOCK": self.sock,
-            "BITCHAT_LOG_LEVEL": os.environ.get("BITCHAT_LOG_LEVEL", "INFO"),
-        })
+        env.update(
+            {
+                "BITCHAT_TRANSPORT": "bluez",
+                "BITCHAT_ROLE": self.role,
+                "BITCHAT_CTL_SOCK": self.sock,
+                "BITCHAT_LOG_LEVEL": os.environ.get("BITCHAT_LOG_LEVEL", "INFO"),
+            }
+        )
         env.update(self.env_extra or {})
         cmd = ["./build/bin/bitchatd"]
         stdbuf = shutil.which("stdbuf")
@@ -120,8 +135,9 @@ class DaemonProc:
             cmd = [stdbuf, "-oL", "-eL"] + cmd  # line-buffer both streams
 
         # Prepare log file path (one per daemon start)
-        self.log_dir = os.path.expanduser(os.environ.get("BITCHAT_TUI_LOG_DIR",
-                                                         "~/.cache/bitchat-clone/logs"))
+        self.log_dir = os.path.expanduser(
+            os.environ.get("BITCHAT_TUI_LOG_DIR", "~/.cache/bitchat-clone/logs")
+        )
         os.makedirs(self.log_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.log_path = os.path.join(self.log_dir, f"{self.role}-{ts}.log")
@@ -210,31 +226,52 @@ class DaemonProc:
 
 class DaemonManager:
     """Starts/stops both roles; parses logs to keep status/peers; proxies SEND."""
+
     def __init__(self, state: ChatState):
         self.state = state
-        self.central = DaemonProc("central", "~/.cache/bitchat-clone/central.sock", env_extra={})
-        self.periph  = DaemonProc("peripheral", "~/.cache/bitchat-clone/peripheral.sock", env_extra={})
+        self.central = DaemonProc(
+            "central", "~/.cache/bitchat-clone/central.sock", env_extra={}
+        )
+        self.periph = DaemonProc(
+            "peripheral", "~/.cache/bitchat-clone/peripheral.sock", env_extra={}
+        )
         self._tasks: List[asyncio.Task] = []
 
         # Top bar status
         self.local_id: str = detect_local_id("hci0")
+        self.user_id_env: str = (os.environ.get("BITCHAT_USER_ID") or "").strip()
         self.central_connected = False
         self.central_ready = False
         self.central_discovering = False
         self.periph_adv = False
 
         # Regex from current daemon logs
-        self.rx_recv              = re.compile(r"\[RECV\]\s+(.*)$")
-        self.rx_found             = re.compile(r"found\s+(\S+)\s+addr=([0-9A-F:]{17})", re.I)
-        self.rx_connected         = re.compile(r"Device connected:\s+(\S+)")
-        self.rx_connected_prop    = re.compile(r"Connected property became true \((\S+)\)")
+        ## peer state
+        self.rx_recv = re.compile(r"\[RECV\]\s+(.*)$")
+        self.rx_found = re.compile(r"found\s+(\S+)\s+addr=([0-9A-F:]{17})", re.I)
+        self.rx_connected = re.compile(r"Device connected:\s+(\S+)")
+        self.rx_connected_prop = re.compile(r"Connected property became true \((\S+)\)")
         self.rx_disconnected_path = re.compile(r"Disconnected\s+\((\S+)\)")
-        self.rx_iface_removed     = re.compile(r"InterfacesRemoved -> cleared device (\S+)")
-        self.rx_ready             = re.compile(r"Notifications enabled; ready")
-        self.rx_start_disc        = re.compile(r"StartDiscovery OK", re.I)
-        self.rx_stop_disc         = re.compile(r"StopDiscovery OK", re.I)
-        self.rx_adv_ok            = re.compile(r"LE advertisement registered successfully")
-        self.rx_listen            = re.compile(r"Listening on\s+(\S+)")
+        self.rx_iface_removed = re.compile(r"InterfacesRemoved -> cleared device (\S+)")
+        self.rx_ready = re.compile(r"Notifications enabled; ready")
+        self.rx_start_disc = re.compile(r"StartDiscovery OK", re.I)
+        self.rx_stop_disc = re.compile(r"StopDiscovery OK", re.I)
+        self.rx_adv_ok = re.compile(r"LE advertisement registered successfully")
+        self.rx_listen = re.compile(r"Listening on\s+(\S+)")
+        # parse user id
+        self.rx_ctrl_hello_in = re.compile(
+            r"\[CTRL\]\s+HELLO in:\s+user='([^']*)'\s+caps=0x([0-9A-Fa-f]{8})"
+        )
+        self.rx_ctrl_hello_out = re.compile(
+            r"\[CTRL\]\s+HELLO out:\s+user='([^']*)'\s+caps=0x([0-9A-Fa-f]{8})"
+        )
+
+        # record current active peer's mac
+        self.active_mac: Optional[str] = None
+
+        # check if PSK is enabled on local/peer
+        self.psk_local = bool(os.environ.get("BITCHAT_PSK"))
+        self.psk_peer = False
 
         # track /org/bluez/... dev path -> MAC
         self.dev_to_mac: Dict[str, str] = {}
@@ -243,9 +280,17 @@ class DaemonManager:
         await self.central.start()
         await self.periph.start()
         if self.central.proc and self.central.proc.stdout:
-            self._tasks.append(asyncio.create_task(self._read_loop("central", self.central.proc.stdout)))
+            self._tasks.append(
+                asyncio.create_task(
+                    self._read_loop("central", self.central.proc.stdout)
+                )
+            )
         if self.periph.proc and self.periph.proc.stdout:
-            self._tasks.append(asyncio.create_task(self._read_loop("peripheral", self.periph.proc.stdout)))
+            self._tasks.append(
+                asyncio.create_task(
+                    self._read_loop("peripheral", self.periph.proc.stdout)
+                )
+            )
 
         # Wait until sockets exist then enable [RECV] printing on both daemons
         await self._wait_sock(self.central.sock)
@@ -282,7 +327,6 @@ class DaemonManager:
                 elif tag == "peripheral":
                     self.periph_adv = False
                 return
-            text = line.decode(errors="replace").rstrip()
             text = line.decode(errors="replace").rstrip()
             # Tee to per-daemon log file
             try:
@@ -327,8 +371,11 @@ class DaemonManager:
             p = self.state.upsert_peer(mac, display=mac)
             p.is_connected = True
             self.central_connected = True
+            self.active_mac = mac
             self.central_ready = False
-            self.state.add_msg(mac, Message(datetime.now(), "sys", "[central] connected"))
+            self.state.add_msg(
+                mac, Message(datetime.now(), "sys", "link up, resolving services...")
+            )
             return
 
         # 4) Ready (enable is_connected for UI too)
@@ -337,7 +384,10 @@ class DaemonManager:
             mac = self.state.current_peer
             if mac and mac in self.state.peers:
                 self.state.peers[mac].is_connected = True
-            self.state.add_msg(mac or "peer", Message(datetime.now(), "sys", "[central] ready"))
+            self.state.add_msg(
+                mac or "peer",
+                Message(datetime.now(), "sys", "ready - notifications enabled"),
+            )
             return
 
         # 5) Disconnect (two shapes)
@@ -349,7 +399,9 @@ class DaemonManager:
             p.is_connected = False
             self.central_connected = False
             self.central_ready = False
-            self.state.add_msg(mac, Message(datetime.now(), "sys", "[central] disconnected"))
+            self.active_mac = None
+            self.psk_peer = False
+            self.state.add_msg(mac, Message(datetime.now(), "sys", "link down"))
             return
 
         # 6) Discovery & advertising toggles (for top bar)
@@ -363,8 +415,38 @@ class DaemonManager:
             self.periph_adv = True
             return
 
+        # 7) Parse HELLO in/out and update UI
+        m = self.rx_ctrl_hello_in.search(line)
+        if m:
+            user = m.group(1)
+            caps = int(m.group(2), 16)
+            if self.active_mac:
+                disp = (
+                    user if user else self.active_mac
+                )  # if user id is not set, use mac addr
+                self.state.upsert_peer(self.active_mac, display=disp)
+                self.psk_peer = bool(caps & 0x1)  # bit0 = AEAD_PSK_SUPPORTED
+                self.state.add_msg(
+                    self.active_mac,
+                    Message(
+                        datetime.now(),
+                        "sys",
+                        f"(hello) peer id is '{user or '<none>'}'",
+                    ),
+                )
+            return
+
+        # 8) Show my PSK and peer's PSK state
+        m = self.rx_ctrl_hello_out.search(line)
+        if m:
+            caps = int(m.group(2), 16)
+            self.psk_local = bool(caps & 0x1)
+            return
+
     def has_selected_peer(self) -> bool:
-        return bool(self.state.current_peer and self.state.current_peer in self.state.peers)
+        return bool(
+            self.state.current_peer and self.state.current_peer in self.state.peers
+        )
 
     def is_ready(self) -> bool:
         return self.has_selected_peer() and self.central_ready
@@ -378,15 +460,20 @@ class DaemonManager:
         # Restart central with a peer filter env
         await self.central.stop()
         self.central = DaemonProc(
-            "central", "~/.cache/bitchat-clone/central.sock",
-            env_extra={"BITCHAT_PEER_ADDR": peer_mac}
+            "central",
+            "~/.cache/bitchat-clone/central.sock",
+            env_extra={"BITCHAT_PEER_ADDR": peer_mac},
         )
         self.central_connected = False
         self.central_ready = False
         self.dev_to_mac.clear()
         await self.central.start()
         if self.central.proc and self.central.proc.stdout:
-            self._tasks.append(asyncio.create_task(self._read_loop("central", self.central.proc.stdout)))
+            self._tasks.append(
+                asyncio.create_task(
+                    self._read_loop("central", self.central.proc.stdout)
+                )
+            )
         # Re-enable tail for the new central daemon so [RECV] shows up
         await self._wait_sock(self.central.sock)
         try:
@@ -396,9 +483,22 @@ class DaemonManager:
         self.state.current_peer = peer_mac
 
     def status_summary(self) -> str:
-        c = "ready" if self.central_ready else ("connected" if self.central_connected else ("scanning" if self.central_discovering else "idle"))
+        c = (
+            "ready"
+            if self.central_ready
+            else (
+                "link"
+                if self.central_connected
+                else ("scan" if self.central_discovering else "idle")
+            )
+        )
         p = "adv" if self.periph_adv else "no-adv"
-        return f"My ID: {self.local_id} | central: {c} | peripheral: {p}"
+        sec = "🔒" if (self.psk_local and self.psk_peer) else "🔓"
+        peer_disp = "-"
+        if self.active_mac and self.active_mac in self.state.peers:
+            peer_disp = self.state.peers[self.active_mac].display
+        myid = self.user_id_env or self.local_id
+        return f"My ID: {myid} | central: {c} | peripheral: {p} | peer: {peer_disp} | sec: {sec}"
 
     async def _wait_sock(self, path: str, timeout: float = 3.0):
         """Wait until the AF_UNIX control socket is listening."""
@@ -419,10 +519,13 @@ class DaemonManager:
                     pass
             await asyncio.sleep(0.05)
 
+
 # ======================= UI =======================
+
 
 class TopBar(Static):
     """Simple top bar (no command palette), shows clock + ID + BLE status."""
+
     def __init__(self, app_ref: "BitChat"):
         super().__init__(id="top")
         self.app_ref = app_ref
@@ -436,6 +539,7 @@ class TopBar(Static):
             self._text = text
             self.update(self._text)
 
+
 class PeersPanel(Static):
     def __init__(self, app_ref: "BitChat"):
         super().__init__()
@@ -448,7 +552,10 @@ class PeersPanel(Static):
         yield self.list
 
     def refresh_peers(self):
-        snapshot = tuple((pid, p.display, p.is_connected) for pid, p in self.app_ref.state.peers.items())
+        snapshot = tuple(
+            (pid, p.display, p.is_connected)
+            for pid, p in self.app_ref.state.peers.items()
+        )
         if snapshot == self._last_snapshot:
             return
         self._last_snapshot = snapshot
@@ -476,6 +583,7 @@ class PeersPanel(Static):
         await self.app_ref.manager.switch_peer(pid)
         self.app_ref.refresh_all()
 
+
 class ChatView(Static):
     def __init__(self, app_ref: "BitChat"):
         super().__init__()
@@ -494,9 +602,14 @@ class ChatView(Static):
         lines = []
         for m in self.app_ref.state.peers[pid].history[-300:]:
             t = m.ts.strftime("%H:%M:%S")
-            who = "You" if m.direction == "out" else ("Peer" if m.direction == "in" else "Sys")
+            who = (
+                "You"
+                if m.direction == "out"
+                else ("Peer" if m.direction == "in" else "Sys")
+            )
             lines.append(f"[{t}] {who}: {m.text}")
         self.chat_content.update("\n".join(lines) or "(empty)")
+
 
 class InputBar(Static):
     def __init__(self, app_ref: "BitChat"):
@@ -530,7 +643,9 @@ class InputBar(Static):
             return
         if not self.enabled:
             pid = self.app_ref.state.current_peer or "peer"
-            self.app_ref.state.add_msg(pid, Message(datetime.now(), "sys", "send blocked (not ready)"))
+            self.app_ref.state.add_msg(
+                pid, Message(datetime.now(), "sys", "send blocked (not ready)")
+            )
             self.app_ref.refresh_all()
             self.input.value = ""
             return
@@ -541,10 +656,13 @@ class InputBar(Static):
         try:
             await self.app_ref.manager.send_text(text)
         except Exception as e:
-            self.app_ref.state.add_msg(pid, Message(datetime.now(), "sys", f"send failed: {e}"))
+            self.app_ref.state.add_msg(
+                pid, Message(datetime.now(), "sys", f"send failed: {e}")
+            )
             self.app_ref.refresh_all()
         finally:
             self.input.value = ""
+
 
 class BitChat(App):
     CSS = """
@@ -578,6 +696,7 @@ class BitChat(App):
     # Safety override even if framework provides a palette:
     def action_command_palette(self):  # type: ignore[override]
         pass
+
     def action_noop(self):
         pass
 
@@ -617,7 +736,9 @@ class BitChat(App):
         finally:
             self.exit()
 
+
 # ======================= Entrypoint =======================
+
 
 async def main():
     state = ChatState()
@@ -635,6 +756,7 @@ async def main():
         await app.run_async()
     finally:
         await mgr.stop()
+
 
 if __name__ == "__main__":
     try:
