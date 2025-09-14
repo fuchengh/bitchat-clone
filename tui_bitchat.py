@@ -58,6 +58,8 @@ class ChatState:
     def add_msg(self, peer_id: str, msg: Message):
         p = self.upsert_peer(peer_id)
         p.history.append(msg)
+        if len(p.history) > 1000:
+            del p.history[:-1000]
 
 
 # ======================= Small helpers =======================
@@ -158,15 +160,7 @@ class DaemonProc:
     async def stop(self):
         """Try QUIT; then TERM process group; then KILL process group."""
         if not self.proc:
-            if self.log_fp:
-                try:
-                    self.log_fp.flush()
-                    self.log_fp.close()
-                except Exception:
-                    pass
-                self.log_fp = None
-                self.log_path = None
-                self.log_dir = None
+            self._close_logfile()
             return
 
         proc = self.proc
@@ -184,35 +178,39 @@ class DaemonProc:
             except asyncio.TimeoutError:
                 return False
 
-        # 1) Graceful via control socket
         try:
-            await run_bitchatctl(self.sock, "quit")
-        except Exception:
-            pass
-        if await wait_done(1.5):
-            return
+            # 1) Graceful via control socket
+            try:
+                await run_bitchatctl(self.sock, "quit")
+            except Exception:
+                pass
+            if await wait_done(1.5):
+                return
 
-        # 2) SIGTERM group
-        try:
-            if pgid is not None:
-                os.killpg(pgid, signal.SIGTERM)
-            else:
-                proc.terminate()
-        except ProcessLookupError:
-            return
-        if await wait_done(1.5):
-            return
+            # 2) SIGTERM group
+            try:
+                if pgid is not None:
+                    os.killpg(pgid, signal.SIGTERM)
+                else:
+                    proc.terminate()
+            except ProcessLookupError:
+                return
+            if await wait_done(1.5):
+                return
 
-        # 3) SIGKILL group
-        try:
-            if pgid is not None:
-                os.killpg(pgid, signal.SIGKILL)
-            else:
-                proc.kill()
-        except ProcessLookupError:
-            return
-        await proc.wait()
-        # Close log file when process is fully stopped
+            # 3) SIGKILL group
+            try:
+                if pgid is not None:
+                    os.killpg(pgid, signal.SIGKILL)
+                else:
+                    proc.kill()
+            except ProcessLookupError:
+                return
+            await proc.wait()
+        finally:
+            self._close_logfile()
+
+    def _close_logfile(self):
         if self.log_fp:
             try:
                 self.log_fp.flush()
@@ -335,7 +333,7 @@ class DaemonManager:
                     fp.write(text + "\n")
             except Exception:
                 pass
-            self._on_log(tag, line.decode(errors="replace").rstrip())
+            self._on_log(tag, text)
 
     def _on_log(self, tag: str, line: str):
         # 0) Set socket path (daemon might override)
@@ -438,7 +436,7 @@ class DaemonManager:
 
         # 8) Show my PSK and peer's PSK state
         m = self.rx_ctrl_hello_out.search(line)
-        if m:
+        if m and tag == "central":
             caps = int(m.group(2), 16)
             self.psk_local = bool(caps & 0x1)
             return
@@ -457,6 +455,8 @@ class DaemonManager:
         await run_bitchatctl(self.central.sock, "send", text)
 
     async def switch_peer(self, peer_mac: str):
+        # cleanup finished tasks to avoid growth
+        self._tasks = [t for t in self._tasks if not t.done()]
         # Restart central with a peer filter env
         await self.central.stop()
         self.central = DaemonProc(
@@ -493,7 +493,7 @@ class DaemonManager:
             )
         )
         p = "adv" if self.periph_adv else "no-adv"
-        sec = "🔒" if (self.psk_local and self.psk_peer) else "🔓"
+        sec = "🔐" if (self.psk_local and self.psk_peer) else "🔓"
         peer_disp = "-"
         if self.active_mac and self.active_mac in self.state.peers:
             peer_disp = self.state.peers[self.active_mac].display
@@ -565,7 +565,10 @@ class PeersPanel(Static):
         current_idx = keys.index(current_pid) if current_pid in keys else None
 
         self.list.clear()
-        for pid, p in self.app_ref.state.peers.items():
+        for pid, p in sorted(
+            self.app_ref.state.peers.items(),
+            key=lambda kv: (kv[1].display.lower(), kv[0]),
+        ):
             dot = "● " if p.is_connected else "○ "
             self.list.append(ListItem(Label(f"{dot}{p.display}")))
 

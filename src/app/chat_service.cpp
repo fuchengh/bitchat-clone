@@ -89,6 +89,8 @@ bool ChatService::start()
     const char *ctrl_env     = std::getenv("BITCHAT_CTRL_HELLO");
     const bool  enable_hello = (ctrl_env ? (std::strcmp(ctrl_env, "0") != 0)
                                          : (tx_.name() == std::string("bluez")));
+    ctrl_hello_enabled_      = enable_hello;
+
     if (!enable_hello)
     {
         return true;  // no hello packet for loopback
@@ -192,28 +194,26 @@ bool ChatService::send_text(std::string_view msg)
 void ChatService::on_rx(const transport::Frame &f)
 {
     // CTRL_HELLO
-    if (f.size() >= 2 && f[0] == ctrl::MSG_CTRL_HELLO)
+    if (ctrl_hello_enabled_ && f.size() >= 2 && f[0] == ctrl::MSG_CTRL_HELLO &&
+        f[1] == ctrl::HELLO_VER)
     {
         ctrl::Hello h{};
-        if (f[1] == ctrl::HELLO_VER && ctrl::parse_hello(f.data(), f.size(), h))
+        if (ctrl::parse_hello(f.data(), f.size(), h))
         {
             if (!h.user_id.empty())
                 peer_user_ = h.user_id;
             if (h.has_caps)
                 peer_caps_ = h.caps;
             if (h.has_na32)
-            {
                 std::copy_n(h.na32.data(), 32, peer_na32_.data());
-            }
             else
-            {
                 std::fill(peer_na32_.begin(), peer_na32_.end(), 0);
-            }
             LOG_INFO("[CTRL] HELLO in: user='%s' caps=0x%08x na32=%02x%02x...",
-                     peer_user_.empty() ? "<none>" : peer_user_.c_str(), peer_caps_,
-                     (unsigned)peer_na32_[0], (unsigned)peer_na32_[0]);
-            return;
+                     (peer_user_.empty() ? "<none>" : peer_user_.c_str()), peer_caps_,
+                     (unsigned)peer_na32_[0], (unsigned)peer_na32_[1]);
+            return;  // successfully parsed hello packet
         }
+        // fallthrough if failed to parse hello packet
     }
 
     // parse -> reassemble -> aead.open -> print

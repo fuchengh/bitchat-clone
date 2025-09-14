@@ -37,6 +37,7 @@ class ChatService
     std::atomic<std::uint32_t>                  next_id_{1};
     std::atomic<bool>                           tail_enabled_{true};
     // hello packet
+    bool                    ctrl_hello_enabled_;
     std::thread             hello_thr_;
     std::atomic_bool        hello_stop_{true};
     bool                    hello_sent_{false};

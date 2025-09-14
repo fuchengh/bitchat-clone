@@ -13,6 +13,7 @@ constexpr uint8_t T_CAPS         = 0x02;
 constexpr uint8_t T_NA32         = 0x12;
 
 constexpr uint32_t CAP_AEAD_PSK_SUPPORTED = 1u << 0;
+constexpr std::size_t USER_ID_MAX            = 64;
 
 struct Hello
 {
@@ -26,22 +27,27 @@ struct Hello
 inline std::vector<uint8_t> encode_hello(std::string_view user, uint32_t caps, const uint8_t *na32)
 {
     std::vector<uint8_t> out;
-    out.reserve(2 + 2 + user.size() + 2 + 4 + 2 + 32);
+    const std::size_t    uid_len = (user.size() > USER_ID_MAX) ? USER_ID_MAX : user.size();
+    out.reserve(2 + 2 + uid_len + 2 + 4 + 2 + 32);
     out.push_back(MSG_CTRL_HELLO);
     out.push_back(HELLO_VER);
-    if (!user.empty())
+    // T_USER_ID only when length in 1..64
+    if (uid_len > 0)
     {
         out.push_back(T_USER_ID);
         out.push_back(0x00);
-        out.push_back((uint8_t)user.size());
-        out.insert(out.end(), user.begin(), user.end());
+        out.push_back(static_cast<uint8_t>(uid_len));
+        out.insert(out.end(), user.begin(), user.begin() + uid_len);
     }
     out.push_back(T_CAPS);
     out.push_back(0x00);
     out.push_back(0x04);
-    uint32_t       le = caps;  // host assumed LE
-    const uint8_t *p  = reinterpret_cast<const uint8_t *>(&le);
-    out.insert(out.end(), p, p + 4);
+    // explicit little-endian
+    out.push_back(static_cast<uint8_t>((caps)&0xFF));
+    out.push_back(static_cast<uint8_t>((caps >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>((caps >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((caps >> 24) & 0xFF));
+
     if (na32)
     {
         out.push_back(T_NA32);
@@ -68,7 +74,10 @@ inline bool parse_hello(const uint8_t *buf, size_t len, Hello &h)
         switch (t)
         {
             case T_USER_ID:
-                h.user_id.assign((const char *)v, (size_t)L);
+                // 1..64, else malformed
+                if (L == 0 || L > USER_ID_MAX)
+                    return false;
+                h.user_id.assign(reinterpret_cast<const char *>(v), static_cast<size_t>(L));
                 break;
             case T_CAPS:
                 if (L != 4)
