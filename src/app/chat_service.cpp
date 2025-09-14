@@ -1,11 +1,20 @@
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
+#include <fcntl.h>
 #include <string>
+#include <unistd.h>
+#include <vector>
 
 #include "app/chat_service.hpp"
+#include "crypto/psk_aead.hpp"
+#include "proto/ctrl.hpp"
 #include "proto/frag.hpp"
-#include "transport/bluez_transport.hpp"
 #include "transport/itransport.hpp"
 #include "util/constants.hpp"
 #include "util/log.hpp"
@@ -15,6 +24,26 @@ namespace app
 
 constexpr std::uint8_t AAD[] = {'B', 'C', '1'};
 
+inline bool get_na32(std::array<uint8_t, 32> &out)
+{
+    int fd = ::open("/dev/urandom", O_RDONLY);
+    if (fd < 0)
+        return false;
+    size_t got = 0;
+    while (got < out.size())
+    {
+        ssize_t n = ::read(fd, out.data() + got, out.size() - got);
+        if (n <= 0)
+        {
+            ::close(fd);
+            return false;
+        }
+        got += size_t(n);
+    }
+    ::close(fd);
+    return true;
+}
+
 ChatService::ChatService(transport::ITransport &t, aead::PskAead &aead, std::size_t mtu_payload)
     : tx_(t), aead_(aead), mtu_payload_(mtu_payload)
 {
@@ -22,6 +51,9 @@ ChatService::ChatService(transport::ITransport &t, aead::PskAead &aead, std::siz
 
 bool ChatService::start()
 {
+    // in case there are any background hello-threads
+    stop();
+
     // Default to loopback
     // If BITCHAT_TRANSPORT=bluez we pass BLE UUIDs and role
     auto env_or = [](const char *key, const char *defv) -> std::string {
@@ -49,7 +81,75 @@ bool ChatService::start()
         s.role = "loopback";
     }
 
-    return tx_.start(s, [this](const transport::Frame &f) { this->on_rx(f); });
+    bool ok = tx_.start(s, [this](const transport::Frame &f) { this->on_rx(f); });
+    if (!ok)
+        return false;
+
+    // Decide if we run HELLO thread (default: only for bluez, or env override)
+    const char *ctrl_env     = std::getenv("BITCHAT_CTRL_HELLO");
+    const bool  enable_hello = (ctrl_env ? (std::strcmp(ctrl_env, "0") != 0)
+                                         : (tx_.name() == std::string("bluez")));
+    ctrl_hello_enabled_      = enable_hello;
+
+    if (!enable_hello)
+    {
+        return true;  // no hello packet for loopback
+    }
+
+    // Prepare user ID and send hello packet
+    if (const char *u = std::getenv("BITCHAT_USER_ID"))
+        local_user_ = u;
+    else
+        local_user_.clear();
+    if (local_user_.size() > 64)
+        local_user_.resize(64);
+    local_caps_ = std::getenv("BITCHAT_PSK") ? ctrl::CAP_AEAD_PSK_SUPPORTED : 0;
+
+    hello_stop_.store(false);
+    hello_sent_ = false;
+    get_na32(na32_);
+
+    hello_thr_ = std::thread([this] {
+        bool last_ready = false;
+        while (!hello_stop_.load())
+        {
+            const bool ready = tx_.link_ready();
+
+            // new link edge: refresh Na32 & clear sent flag
+            if (ready && !last_ready)
+            {
+                get_na32(na32_);
+                hello_sent_ = false;
+            }
+
+            if (ready && !hello_sent_)
+            {
+                auto bytes = ctrl::encode_hello(local_user_, local_caps_, na32_.data());
+                if (tx_.send(bytes))
+                {
+                    hello_sent_ = true;
+                    LOG_INFO("[CTRL] HELLO out: user='%s' caps=0x%08x na32=%02x%02x...",
+                             local_user_.c_str(), local_caps_, (unsigned)na32_[0],
+                             (unsigned)na32_[1]);
+                }
+            }
+            if (!ready)
+                hello_sent_ = false;  // keep false while link is down
+            last_ready = ready;
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    });
+
+    return true;
+}
+
+void ChatService::stop()
+{
+    hello_stop_.store(true);
+    if (hello_thr_.joinable())
+        hello_thr_.join();
+    tx_.stop();
 }
 
 bool ChatService::send_text(std::string_view msg)
@@ -93,8 +193,28 @@ bool ChatService::send_text(std::string_view msg)
 
 void ChatService::on_rx(const transport::Frame &f)
 {
-    if (!tail_enabled_.load(std::memory_order_relaxed))
-        return;
+    // CTRL_HELLO
+    if (ctrl_hello_enabled_ && f.size() >= 2 && f[0] == ctrl::MSG_CTRL_HELLO &&
+        f[1] == ctrl::HELLO_VER)
+    {
+        ctrl::Hello h{};
+        if (ctrl::parse_hello(f.data(), f.size(), h))
+        {
+            if (!h.user_id.empty())
+                peer_user_ = h.user_id;
+            if (h.has_caps)
+                peer_caps_ = h.caps;
+            if (h.has_na32)
+                std::copy_n(h.na32.data(), 32, peer_na32_.data());
+            else
+                std::fill(peer_na32_.begin(), peer_na32_.end(), 0);
+            LOG_INFO("[CTRL] HELLO in: user='%s' caps=0x%08x na32=%02x%02x...",
+                     (peer_user_.empty() ? "<none>" : peer_user_.c_str()), peer_caps_,
+                     (unsigned)peer_na32_[0], (unsigned)peer_na32_[1]);
+            return;  // successfully parsed hello packet
+        }
+        // fallthrough if failed to parse hello packet
+    }
 
     // parse -> reassemble -> aead.open -> print
     auto c = frag::parse(f);
@@ -114,9 +234,12 @@ void ChatService::on_rx(const transport::Frame &f)
         LOG_WARN("on_rx: AEAD open failed");
         return;
     }
-    const char       *p = reinterpret_cast<const char *>(plain.data());
-    const std::size_t n = plain.size();
-    LOG_INFO("[RECV] %.*s", n, p);
+
+    if (tail_enabled_.load(std::memory_order_relaxed))
+    {
+        LOG_INFO("[RECV] %.*s", (int)plain.size(), (const char *)plain.data());
+        return;
+    }
 }
 
 }  // namespace app
