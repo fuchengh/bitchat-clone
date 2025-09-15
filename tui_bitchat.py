@@ -263,6 +263,14 @@ class DaemonManager:
         self.rx_ctrl_hello_out = re.compile(
             r"\[CTRL\]\s+HELLO out:\s+user='([^']*)'\s+caps=0x([0-9A-Fa-f]{8})"
         )
+        # KEX / SEC events from daemon logs
+        self.rx_kex_ok = re.compile(r"\[KEX\]\s+complete\.", re.I)
+        self.rx_kex_fail = re.compile(r"\[KEX\].*(install failed|no/invalid PSK)", re.I)
+        self.rx_psk_fail = re.compile(
+            r"\[SEC\].*AEAD decrypt failed.*dropping frame", re.I
+        )
+        self.sec_warn: bool = False  # any security warning
+        self.aead_active: bool = False  # AEAD session installed and on
 
         # record current active peer's mac
         self.active_mac: Optional[str] = None
@@ -313,6 +321,7 @@ class DaemonManager:
         self.central_discovering = False
         self.periph_adv = False
         self.dev_to_mac.clear()
+        self.sec_warn = False
 
     async def _read_loop(self, tag: str, stream: asyncio.StreamReader):
         while True:
@@ -336,6 +345,45 @@ class DaemonManager:
             self._on_log(tag, text)
 
     def _on_log(self, tag: str, line: str):
+        # Sec/KEX event first
+        # AEAD decrypt failed, likely PSK mismatch: frames are dropped
+        if self.rx_psk_fail.search(line):
+            self.sec_warn = True
+            self.aead_active = False
+            mac = self.active_mac or self.state.current_peer or "peer"
+            self.state.add_msg(
+                mac,
+                Message(
+                    datetime.now(),
+                    "sys",
+                    "PSK mismatch: decryption failed, messages are being dropped...",
+                ),
+            )
+            return
+
+        # KEX complete: AEAD is enabled
+        if self.rx_kex_ok.search(line):
+            self.aead_active = True
+            self.sec_warn = False
+            mac = self.active_mac or self.state.current_peer or "peer"
+            self.state.add_msg(mac, Message(datetime.now(), "sys", "AEAD enabled"))
+            return
+
+        # KEX failed: unusable until user fixed
+        if self.rx_kex_fail.search(line):
+            self.aead_active = False
+            self.sec_warn = True
+            mac = self.active_mac or self.state.current_peer or "peer"
+            self.state.add_msg(
+                mac,
+                Message(
+                    datetime.now(),
+                    "sys",
+                    "KEX failed. Please check BITCHAT_PSK and retry again",
+                ),
+            )
+            return
+
         # 0) Set socket path (daemon might override)
         m = self.rx_listen.search(line)
         if m:
@@ -399,6 +447,7 @@ class DaemonManager:
             self.central_ready = False
             self.active_mac = None
             self.psk_peer = False
+            self.aead_active = False
             self.state.add_msg(mac, Message(datetime.now(), "sys", "link down"))
             return
 
@@ -493,7 +542,14 @@ class DaemonManager:
             )
         )
         p = "adv" if self.periph_adv else "no-adv"
-        sec = "🔐" if (self.psk_local and self.psk_peer) else "🔓"
+        # SEC badge
+        if self.aead_active and self.psk_local and self.psk_peer and not self.sec_warn:
+            sec = "🔐"  # AEAD on
+        elif self.psk_local and self.psk_peer and self.sec_warn:
+            sec = "🔐⚠"  # Both support PSK but mismatch or likely decrypt fail
+        else:
+            sec = "🔓"  # plaintext (missing PSK or no KEX)
+
         peer_disp = "-"
         if self.active_mac and self.active_mac in self.state.peers:
             peer_disp = self.state.peers[self.active_mac].display
@@ -546,6 +602,7 @@ class PeersPanel(Static):
         self.app_ref = app_ref
         self.list = ListView()
         self._last_snapshot: Optional[Tuple[Tuple[str, str, bool], ...]] = None
+        self.view_pids: List[str] = []
 
     def compose(self) -> ComposeResult:
         yield Label("Peers", id="peers-title")
@@ -560,15 +617,18 @@ class PeersPanel(Static):
             return
         self._last_snapshot = snapshot
 
-        current_pid = self.app_ref.state.current_peer
-        keys = list(self.app_ref.state.peers.keys())
-        current_idx = keys.index(current_pid) if current_pid in keys else None
-
         self.list.clear()
-        for pid, p in sorted(
+        peers_sorted = sorted(
             self.app_ref.state.peers.items(),
             key=lambda kv: (kv[1].display.lower(), kv[0]),
-        ):
+        )
+        self.view_pids = [pid for pid, _ in peers_sorted]
+        current_pid = self.app_ref.state.current_peer
+        current_idx = (
+            self.view_pids.index(current_pid) if current_pid in self.view_pids else None
+        )
+
+        for pid, p in peers_sorted:
             dot = "● " if p.is_connected else "○ "
             self.list.append(ListItem(Label(f"{dot}{p.display}")))
 
@@ -582,7 +642,9 @@ class PeersPanel(Static):
         idx = event.index
         if idx is None:
             return
-        pid = list(self.app_ref.state.peers.keys())[idx]
+        if idx < 0 or idx >= len(self.view_pids):
+            return
+        pid = self.view_pids[idx]
         await self.app_ref.manager.switch_peer(pid)
         self.app_ref.refresh_all()
 
@@ -618,7 +680,7 @@ class InputBar(Static):
     def __init__(self, app_ref: "BitChat"):
         super().__init__()
         self.app_ref = app_ref
-        self.input = Input(placeholder="Type message… (Enter to send)", id="chat-input")
+        self.input = Input(placeholder="Type message... (Enter to send)", id="chat-input")
         self.enabled: bool = True
 
     def compose(self) -> ComposeResult:
@@ -631,12 +693,21 @@ class InputBar(Static):
         except Exception:
             pass
         if enabled:
-            self.input.placeholder = "Type message… (Enter to send)"
+            # If PSK mismatched: notify user that text will be dropped
+            if (
+                self.app_ref.manager.sec_warn
+                and self.app_ref.manager.psk_local
+                and self.app_ref.manager.psk_peer
+            ):
+                self.input.placeholder = "Connected, but PSK mismatch (messages dropped)"
+            else:
+                self.input.placeholder = "Type message... (Enter to send)"
+
         else:
             if not self.app_ref.manager.has_selected_peer():
                 self.input.placeholder = "Select a peer to start chatting"
             elif not self.app_ref.manager.central_ready:
-                self.input.placeholder = "Waiting for connection…"
+                self.input.placeholder = "Waiting for connection..."
             else:
                 self.input.placeholder = "Not ready"
 

@@ -36,8 +36,8 @@ struct EnvGuard
 
 TEST(AEAD_Sodium, FromEnv_InvalidHex)
 {
-    EnvGuard g("BITCHAT_PSK_HEX", "not-hex");
-    auto     s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX");
+    EnvGuard g("BITCHAT_PSK", "not-hex");
+    auto     s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK");
     EXPECT_FALSE(s.has_value());
 }
 
@@ -45,9 +45,9 @@ TEST(AEAD_Sodium, Roundtrip_Hello)
 {
     // 32-byte key: all 0x11 -> 64 hex '11...'
     const char *keyhex = "1111111111111111111111111111111111111111111111111111111111111111";
-    EnvGuard    g("BITCHAT_PSK_HEX", keyhex);
+    EnvGuard    g("BITCHAT_PSK", keyhex);
 
-    auto s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX");
+    auto s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK");
     ASSERT_TRUE(s.has_value());
     SodiumPskAead aead = *s;
 
@@ -69,9 +69,9 @@ TEST(AEAD_Sodium, Roundtrip_Hello)
 TEST(AEAD_Sodium, Roundtrip_ZeroLen)
 {
     const char *keyhex = "2222222222222222222222222222222222222222222222222222222222222222";
-    EnvGuard    g("BITCHAT_PSK_HEX", keyhex);
+    EnvGuard    g("BITCHAT_PSK", keyhex);
 
-    auto s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX");
+    auto s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK");
     ASSERT_TRUE(s.has_value());
     SodiumPskAead aead = *s;
 
@@ -86,9 +86,9 @@ TEST(AEAD_Sodium, Roundtrip_ZeroLen)
 TEST(AEAD_Sodium, AAD_Mismatch_Fails)
 {
     const char *keyhex = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    EnvGuard    g("BITCHAT_PSK_HEX", keyhex);
+    EnvGuard    g("BITCHAT_PSK", keyhex);
 
-    auto s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX");
+    auto s = SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK");
     ASSERT_TRUE(s.has_value());
     SodiumPskAead aead = *s;
 

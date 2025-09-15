@@ -69,7 +69,7 @@ python ./tui_bitchat.py
 
 Optional env vars before launching:
 ```bash
-export BITCHAT_PSK_HEX="$(openssl rand -hex 32)"   # enable AEAD (recommended)
+export BITCHAT_PSK="$(openssl rand -hex 32)"       # enable AEAD (recommended)
 export BITCHAT_LOCAL_ID="my-device"                # override top bar ID
 export BITCHAT_LOG_LEVEL=INFO                      # DEBUG/INFO/WARN/ERROR
 # export BITCHAT_ADAPTER=hci0                      # if you don't use hci0
@@ -113,14 +113,14 @@ By default the daemon uses a Noop AEAD (plaintext) for testing.
 
 Enable `XChaCha20-Poly1305` with a 32-byte PSK:
 ```bash
-export BITCHAT_PSK_HEX="$(openssl rand -hex 32)"
+export BITCHAT_PSK="$(openssl rand -hex 32)"
 ./build/bin/bitchatd
 ```
 
-- `BITCHAT_PSK_HEX` = 64 hex chars (32 bytes).
+- `BITCHAT_PSK` = 64 hex chars (32 bytes).
 - Wire format: `[24B nonce | ciphertext || tag]`.
 - AEAD is applied **before** fragmentation. Reassembly happens **before** decryption.
-> ⚠️ Without `BITCHAT_PSK_HEX`, traffic is **not** encrypted
+> ⚠️ Without `BITCHAT_PSK`, traffic is **not** encrypted
 
 ## Expected daemon log snippets (with BlueZ enabled)
 

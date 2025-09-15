@@ -13,6 +13,12 @@ constexpr std::size_t KEY_SIZE   = 32;  // crypto_aead_xchacha20poly1305_ietf_KE
 constexpr std::size_t NONCE_SIZE = 24;  // crypto_aead_xchacha20poly1305_ietf_NPUBBYTES
 constexpr std::size_t TAG_SIZE   = 16;  // crypto_aead_xchacha20poly1305_ietf_ABYTES
 
+struct SessionKeys
+{
+    std::array<uint8_t, 32> ke_c2p{}, ke_p2c{};
+    std::array<uint8_t, 24> n24_c2p{}, n24_p2c{};
+};
+
 class PskAead
 {
   public:
@@ -27,6 +33,8 @@ class PskAead
                       const std::uint8_t              *aad,
                       std::size_t                      aad_len,
                       std::vector<std::uint8_t>       &out) = 0;
+
+    virtual bool set_session(const SessionKeys *key) = 0;
 };
 
 class NoopPskAead : public PskAead
@@ -58,6 +66,12 @@ class NoopPskAead : public PskAead
         out.assign(in.begin() + NONCE_SIZE, in.end() - TAG_SIZE);
         return true;
     }
+
+    bool set_session(const SessionKeys *key) override
+    {
+        (void)key;
+        return false;
+    }
 };
 
 // libsodium-based implementation
@@ -78,8 +92,15 @@ class SodiumPskAead : public PskAead
 
     static std::optional<SodiumPskAead> CheckAndInitFromEnv(const char *env_var);
 
+    bool set_session(const SessionKeys *key) override;
+
   private:
     std::array<std::uint8_t, KEY_SIZE> key_{};
+    // session state (installed after KEX)
+    bool                                 have_session_{false};
+    std::array<std::uint8_t, KEY_SIZE>   key_tx_{}, key_rx_{};
+    std::array<std::uint8_t, NONCE_SIZE> nonce_tx_{}, nonce_rx_{};
+    static void                          nonce_inc_24(std::uint8_t n[NONCE_SIZE]);
 };
 
 }  // namespace aead

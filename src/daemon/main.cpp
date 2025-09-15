@@ -1,6 +1,6 @@
 #include <cassert>
-#include <string>
 #include <memory>
+#include <string>
 
 #include "app/chat_service.hpp"
 #include "crypto/psk_aead.hpp"
@@ -76,9 +76,9 @@ int main()
     auto tx = make_transport_from_env();
 
     // AEAD: prefer Sodium key if env is set, else Noop
-    if (auto s = aead::SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX"))
+    if (auto s = aead::SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK"))
     {
-        LOG_INFO("Using SodiumPskAead (key from BITCHAT_PSK_HEX)");
+        LOG_INFO("Using SodiumPskAead (key from BITCHAT_PSK)");
         g_aead = std::make_unique<aead::SodiumPskAead>(*s);
     }
     else
