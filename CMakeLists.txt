@@ -163,6 +163,7 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
+# --- Unit tests
 add_executable(unit_tests
   tests/test_ipc.cpp
   tests/test_cli.cpp
@@ -170,6 +171,7 @@ add_executable(unit_tests
   tests/test_frag.cpp
   tests/test_aead.cpp
   tests/test_chat.cpp
+  tests/test_aead_session.cpp
 )
 target_include_directories(unit_tests PRIVATE include)
 target_link_libraries(unit_tests
