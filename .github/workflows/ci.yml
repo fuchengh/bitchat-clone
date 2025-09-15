@@ -14,11 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SODIUM_VER: "1.0.20"
-      SODIUM_PREFIX: ${{ runner.home }}/.local/libsodium-1.0.20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # define SODIUM_PREFIX using $HOME at runtime,
+      - name: Set SODIUM_PREFIX
+        run: |
+          echo "SODIUM_PREFIX=$HOME/.local/libsodium-${SODIUM_VER}" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.local/libsodium-${SODIUM_VER}"
 
       - name: Install deps (Ubuntu)
         run: |
@@ -162,10 +167,14 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SODIUM_VER: "1.0.20"
-      SODIUM_PREFIX: ${{ runner.home }}/.local/libsodium-1.0.20
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set SODIUM_PREFIX
+        run: |
+          echo "SODIUM_PREFIX=$HOME/.local/libsodium-${SODIUM_VER}" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.local/libsodium-${SODIUM_VER}"
 
       - name: Install build deps
         run: |
