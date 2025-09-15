@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SODIUM_VER: "1.0.20"
-      SODIUM_PREFIX: ${{ github.runner.home }}/.local/libsodium-1.0.20
+      SODIUM_PREFIX: ${{ runner.home }}/.local/libsodium-1.0.20
 
     steps:
       - name: Checkout
@@ -53,15 +53,17 @@ jobs:
           curl -L -o sodium.tar.gz https://download.libsodium.org/libsodium/releases/libsodium-${SODIUM_VER}.tar.gz
           tar xf sodium.tar.gz
           cd libsodium-${SODIUM_VER}
+          echo "Using SODIUM_PREFIX=${SODIUM_PREFIX}"
+          mkdir -p "${SODIUM_PREFIX}"
           ./configure --prefix="${SODIUM_PREFIX}"
           make -j"$(nproc)"
           make install
 
       - name: Export libsodium env
         run: |
-          echo "PKG_CONFIG_PATH=${SODIUM_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${SODIUM_PREFIX}/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-          echo "LIBRARY_PATH=${SODIUM_PREFIX}/lib:${LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${SODIUM_PREFIX}/lib:${SODIUM_PREFIX}/lib64:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=${SODIUM_PREFIX}/lib:${SODIUM_PREFIX}/lib64:${LIBRARY_PATH}" >> "$GITHUB_ENV"
           echo "CMAKE_PREFIX_PATH=${SODIUM_PREFIX}:${CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
           echo "C_INCLUDE_PATH=${SODIUM_PREFIX}/include:${C_INCLUDE_PATH}" >> "$GITHUB_ENV"
           echo "CPLUS_INCLUDE_PATH=${SODIUM_PREFIX}/include:${CPLUS_INCLUDE_PATH}" >> "$GITHUB_ENV"
@@ -160,7 +162,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SODIUM_VER: "1.0.20"
-      SODIUM_PREFIX: ${{ github.runner.home }}/.local/libsodium-1.0.20
+      SODIUM_PREFIX: ${{ runner.home }}/.local/libsodium-1.0.20
 
     steps:
       - uses: actions/checkout@v4
@@ -184,14 +186,16 @@ jobs:
           curl -L -o sodium.tar.gz https://download.libsodium.org/libsodium/releases/libsodium-${SODIUM_VER}.tar.gz
           tar xf sodium.tar.gz
           cd libsodium-${SODIUM_VER}
+          echo "Using SODIUM_PREFIX=${SODIUM_PREFIX}"
+          mkdir -p "${SODIUM_PREFIX}"
           ./configure --prefix="${SODIUM_PREFIX}"
           make -j"$(nproc)"
           make install
 
       - name: Export libsodium env
         run: |
-          echo "PKG_CONFIG_PATH=${SODIUM_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${SODIUM_PREFIX}/lib:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${SODIUM_PREFIX}/lib:${SODIUM_PREFIX}/lib64:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
           echo "CMAKE_PREFIX_PATH=${SODIUM_PREFIX}:${CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
           echo "C_INCLUDE_PATH=${SODIUM_PREFIX}/include:${C_INCLUDE_PATH}" >> "$GITHUB_ENV"
           echo "CPLUS_INCLUDE_PATH=${SODIUM_PREFIX}/include:${CPLUS_INCLUDE_PATH}" >> "$GITHUB_ENV"
