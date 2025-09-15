@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.22)
 project(bitchat_clone LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -21,6 +21,8 @@ endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+find_package(PkgConfig QUIET)
+
 # --- Proto
 add_library(bitchat_proto STATIC src/proto/frag.cpp)
 target_include_directories(bitchat_proto PUBLIC include)
@@ -31,26 +33,64 @@ add_library(bitchat_crypto STATIC src/crypto/psk_aead.cpp)
 target_include_directories(bitchat_crypto PUBLIC include)
 target_link_libraries(bitchat_crypto PRIVATE bitchat_warnings)
 
-# libsodium via pkg-config (IMPORTED_TARGET)
-find_package(PkgConfig QUIET)
-if (PkgConfig_FOUND)
-  pkg_check_modules(LIBSODIUM QUIET IMPORTED_TARGET libsodium)
+## --- libsodium (>= 1.0.20) ---
+option(BITCHAT_SODIUM_STATIC "Link libsodium statically" ON)
+
+# First, locate headers
+find_path(SODIUM_INCLUDE_DIR
+          NAMES sodium.h
+          PATHS /usr/local/include /usr/include
+)
+if (NOT SODIUM_INCLUDE_DIR)
+  message(FATAL_ERROR "sodium.h not found. Install libsodium headers (libsodium-dev) first.")
+endif()
+target_include_directories(bitchat_crypto PUBLIC ${SODIUM_INCLUDE_DIR})
+
+set(_sodium_linked FALSE)
+if (BITCHAT_SODIUM_STATIC)
+  # Prefer a direct static archive
+  find_library(SODIUM_STATIC NAMES libsodium.a sodium.a
+               PATHS /usr/local/lib /usr/lib /lib
+  )
+  if (SODIUM_STATIC)
+    add_library(Sodium::Sodium STATIC IMPORTED)
+    set_target_properties(Sodium::Sodium PROPERTIES
+      IMPORTED_LOCATION "${SODIUM_STATIC}"
+      INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_INCLUDE_DIR}"
+    )
+    target_link_libraries(bitchat_crypto PUBLIC Sodium::Sodium)
+    find_package(Threads REQUIRED)
+    target_link_libraries(bitchat_crypto PUBLIC Threads::Threads m dl)
+    set(_sodium_linked TRUE)
+    message(STATUS "Linking libsodium statically: ${SODIUM_STATIC}")
+  endif()
 endif()
 
-if (TARGET PkgConfig::LIBSODIUM)
-  # Propagate include+link to dependents (PUBLIC)
-  target_link_libraries(bitchat_crypto PUBLIC PkgConfig::LIBSODIUM)
-else()
-  # Fallback: absolute paths
-  find_path(SODIUM_INCLUDE_DIR NAMES sodium.h
-            HINTS /usr/include /usr/local/include /opt/homebrew/include)
-  find_library(SODIUM_LIBRARY NAMES sodium
-               HINTS /usr/lib /usr/local/lib /opt/homebrew/lib)
-  if (NOT SODIUM_INCLUDE_DIR OR NOT SODIUM_LIBRARY)
-    message(FATAL_ERROR "libsodium not found. Install libsodium-dev (Ubuntu) or brew install libsodium (macOS).")
+if (NOT _sodium_linked)
+  # Fallback to shared (pkg-config if available)
+  if (PkgConfig_FOUND)
+    pkg_check_modules(LIBSODIUM QUIET IMPORTED_TARGET libsodium>=1.0.20)
   endif()
-  target_include_directories(bitchat_crypto PUBLIC ${SODIUM_INCLUDE_DIR})
-  target_link_libraries(bitchat_crypto PUBLIC ${SODIUM_LIBRARY})
+  if (TARGET PkgConfig::LIBSODIUM)
+    target_link_libraries(bitchat_crypto PUBLIC PkgConfig::LIBSODIUM)
+    set(_sodium_linked TRUE)
+    message(STATUS "Linking libsodium via pkg-config (shared)")
+  else()
+    find_library(SODIUM_SHARED NAMES sodium
+                 PATHS /usr/local/lib /usr/lib /lib
+    )
+    if (NOT SODIUM_SHARED)
+      message(FATAL_ERROR "libsodium (>=1.0.20) not found (shared).")
+    endif()
+    add_library(Sodium::Sodium SHARED IMPORTED)
+    set_target_properties(Sodium::Sodium PROPERTIES
+      IMPORTED_LOCATION "${SODIUM_SHARED}"
+      INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_INCLUDE_DIR}"
+    )
+    target_link_libraries(bitchat_crypto PUBLIC Sodium::Sodium)
+    set(_sodium_linked TRUE)
+    message(STATUS "Linking libsodium using shared library: ${SODIUM_SHARED}")
+  endif()
 endif()
 
 # --- IPC
@@ -63,8 +103,7 @@ set(TRANSPORT_SRCS src/transport/loopback_transport.cpp)
 # On Linux, always build the BlueZ transport stub. It has no external headers yet.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
   list(APPEND TRANSPORT_SRCS src/transport/bluez_transport.cpp)
-  # If BlueZ dev package exists, we will link it (not required for the stub).
-  find_package(PkgConfig QUIET)
+  # If BlueZ dev package exists, link it
   if (PkgConfig_FOUND)
     pkg_check_modules(BLUEZ QUIET bluez)
     if (NOT BLUEZ_FOUND)
@@ -80,7 +119,6 @@ target_link_libraries(bitchat_transport PRIVATE bitchat_warnings)
 find_package(Threads REQUIRED)
 target_link_libraries(bitchat_transport PRIVATE Threads::Threads)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  find_package(PkgConfig QUIET)
   if (PkgConfig_FOUND)
     pkg_check_modules(SYSTEMD QUIET libsystemd)
     if (SYSTEMD_FOUND)
@@ -125,6 +163,7 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 
+# --- Unit tests
 add_executable(unit_tests
   tests/test_ipc.cpp
   tests/test_cli.cpp
@@ -132,6 +171,7 @@ add_executable(unit_tests
   tests/test_frag.cpp
   tests/test_aead.cpp
   tests/test_chat.cpp
+  tests/test_aead_session.cpp
 )
 target_include_directories(unit_tests PRIVATE include)
 target_link_libraries(unit_tests
@@ -147,3 +187,40 @@ target_link_libraries(unit_tests
 
 include(GoogleTest)
 gtest_discover_tests(unit_tests)
+# Workaround for Ninja + CMake < 3.20: pre-create object dir for depfiles
+if (CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_VERSION VERSION_LESS "3.20")
+  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/CMakeFiles/unit_tests.dir/tests")
+endif()
+
+set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+foreach(tgt IN ITEMS bitchatd bitchatctl unit_tests)
+  if (TARGET ${tgt})
+    set_target_properties(${tgt} PROPERTIES
+      BUILD_RPATH "$ORIGIN"
+      INSTALL_RPATH "$ORIGIN"
+    )
+  endif()
+endforeach()
+
+if (TARGET Sodium::Sodium AND NOT BITCHAT_SODIUM_STATIC)
+  get_target_property(_sodium_loc Sodium::Sodium IMPORTED_LOCATION)
+  if (_sodium_loc)
+    get_filename_component(_sodium_real "${_sodium_loc}" REALPATH)
+    message(STATUS "Bundling shared libsodium: ${_sodium_real}")
+    foreach(tgt IN ITEMS bitchatd bitchatctl unit_tests)
+      if (TARGET ${tgt})
+        # copy real .so and create SONAME symlink
+        get_filename_component(_sodium_name "${_sodium_real}" NAME)
+        string(REGEX REPLACE "\\.so(\\.[0-9]+).*" ".so\\1" _sodium_soname "${_sodium_name}")
+        add_custom_command(TARGET ${tgt} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  "${_sodium_real}" "$<TARGET_FILE_DIR:${tgt}>/${_sodium_name}"
+          COMMAND ${CMAKE_COMMAND} -E create_symlink
+                  "${_sodium_name}" "$<TARGET_FILE_DIR:${tgt}>/${_sodium_soname}"
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                  "${_sodium_real}" "$<TARGET_FILE_DIR:${tgt}>/${_sodium_soname}"
+        )
+      endif()
+    endforeach()
+  endif()
+endif()

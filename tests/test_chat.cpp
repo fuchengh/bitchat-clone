@@ -45,6 +45,12 @@ struct CapturingAead : public aead::PskAead
             last_plaintext.assign(reinterpret_cast<const char *>(out.data()), out.size());
         return ok;
     }
+
+    bool set_session(const aead::SessionKeys *key) override
+    {
+        (void)key;
+        return false;
+    }
 };
 
 TEST(ChatServiceLoopback, Noop_Short_Roundtrip)
@@ -84,13 +90,12 @@ TEST(ChatServiceLoopback, Sodium_Long_Roundtrip_Fragmented)
     // Inject a fixed 32-byte (all-zero) key via env (64 hex chars)
     // This avoids depending on random and works deterministically in CI.
 #if defined(_WIN32)
-    _putenv("BITCHAT_PSK_HEX=0000000000000000000000000000000000000000000000000000000000000000");
+    _putenv("BITCHAT_PSK=0000000000000000000000000000000000000000000000000000000000000000");
 #else
-    setenv("BITCHAT_PSK_HEX", "0000000000000000000000000000000000000000000000000000000000000000",
-           1);
+    setenv("BITCHAT_PSK", "0000000000000000000000000000000000000000000000000000000000000000", 1);
 #endif
 
-    auto s = aead::SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK_HEX");
+    auto s = aead::SodiumPskAead::CheckAndInitFromEnv("BITCHAT_PSK");
     if (!s.has_value())
     {
         GTEST_SKIP() << "Sodium AEAD not available or key parse failed";

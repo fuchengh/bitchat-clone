@@ -30,13 +30,17 @@ class ChatService
     void set_tail(bool on) { tail_enabled_.store(on, std::memory_order_relaxed); }
 
   private:
-    transport::ITransport                      &tx_;
-    aead::PskAead                              &aead_;
-    frag::Reassembler                           rx_;
-    std::size_t                                 mtu_payload_{100};
-    std::atomic<std::uint32_t>                  next_id_{1};
-    std::atomic<bool>                           tail_enabled_{true};
-    // hello packet
+    transport::ITransport     &tx_;
+    aead::PskAead             &aead_;
+    frag::Reassembler          rx_;
+    std::size_t                mtu_payload_{100};
+    std::atomic<std::uint32_t> next_id_{1};
+    std::atomic<bool>          tail_enabled_{true};
+    void                       maybe_kex();
+    void                       derive_and_install();
+    bool                       parse_psk_env(const char *env, std::vector<uint8_t> &out);
+
+    // hello packet data
     bool                    ctrl_hello_enabled_;
     std::thread             hello_thr_;
     std::atomic_bool        hello_stop_{true};
@@ -48,6 +52,14 @@ class ChatService
     std::string             peer_user_;
     uint32_t                peer_caps_{0};
     std::array<uint8_t, 32> peer_na32_{};
+
+    // for PSK session keys
+    bool is_central_{false};
+    bool local_has_psk_{false};
+    bool peer_has_psk_{false};
+    bool aead_on_{false};
+    bool have_na_local_{false};
+    bool have_na_peer_{false};
 };
 
 }  // namespace app
