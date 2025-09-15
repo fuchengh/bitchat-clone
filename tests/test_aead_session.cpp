@@ -106,7 +106,7 @@ TEST(AEAD_Session, FallbackToEnvIfSenderNoSession)
     ASSERT_EQ(std::string(plain.begin(), plain.end()), msg);
 }
 
-TEST(AEAD_Sodium, PSK_Mismatch)
+TEST(AEAD_Session, PSK_Mismatch)
 {
     const char *key1 = "1111111111111111111111111111111111111111111111111111111111111111";
     const char *key2 = "2222222222222222222222222222222222222222222222222222222222222222";
