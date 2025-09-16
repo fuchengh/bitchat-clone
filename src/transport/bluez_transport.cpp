@@ -108,7 +108,7 @@ struct BluezTransport::Impl
     std::atomic_bool discover_submitted{false};
     uint64_t         next_connect_at_ms{0};
     // ENV BITCHAT_TX_PAUSE_MS (inter-fragment pause)
-    uint32_t tx_pause_ms{0};
+    uint32_t tx_pause_ms{100};
 
     std::atomic_bool notifying{false};  // TX notify state
     std::string      unique_name;       // our bus unique name (debug)
@@ -234,17 +234,6 @@ bool BluezTransport::start(const Settings &s, OnFrame cb)
         {
             settings_.mtu_payload = static_cast<size_t>(v);
             LOG_INFO("[BLUEZ] mtu_payload overrided, env val = %zu", settings_.mtu_payload);
-        }
-    }
-    // Optional: short time-period pausing in central mode to prevent congestion in controller
-    if (const char *g = std::getenv("BITCHAT_TX_PAUSE_MS"))
-    {
-        char         *p = nullptr;
-        unsigned long v = std::strtoul(g, &p, 10);
-        if (p && *p == '\0' && v <= 200)
-        {
-            impl_->tx_pause_ms = static_cast<uint32_t>(v);
-            LOG_INFO("[BLUEZ] tx_pause_ms=%u", impl_->tx_pause_ms);
         }
     }
 
@@ -1024,13 +1013,13 @@ bool BluezTransport::central_cold_scan()
         set_dev_path(found_path.c_str());
         if (have_rssi)
         {
-            LOG_DEBUG("[BLUEZ][central] cold-scan found %s addr=%s rssi=%d (svc hit)",
-                      found_path.c_str(), addr.empty() ? "?" : addr.c_str(), (int)rssi);
+            LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s rssi=%d (svc hit)",
+                       found_path.c_str(), addr.empty() ? "?" : addr.c_str(), (int)rssi);
         }
         else
         {
-            LOG_DEBUG("[BLUEZ][central] cold-scan found %s addr=%s (svc hit)", found_path.c_str(),
-                      addr.empty() ? "?" : addr.c_str());
+            LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s (svc hit)", found_path.c_str(),
+                       addr.empty() ? "?" : addr.c_str());
         }
     }
 
@@ -1073,7 +1062,7 @@ bool BluezTransport::central_start_discovery()
     }
     sd_bus_error_free(&err);
     impl_->discovery_on.store(true);
-    LOG_INFO("[BLUEZ][central] StartDiscovery OK on %s", impl_->adapter_path.c_str());
+    LOG_SYSTEM("[BLUEZ][central] StartDiscovery OK on %s", impl_->adapter_path.c_str());
     return true;
 #endif
 }
@@ -1367,7 +1356,7 @@ bool BluezTransport::central_enable_notify()
     }
     sd_bus_error_free(&err);
     set_subscribed(true);
-    LOG_INFO("[BLUEZ][central] Notifications enabled on %s", impl_->r_tx_path.c_str());
+    LOG_SYSTEM("[BLUEZ][central] Notifications enabled on %s", impl_->r_tx_path.c_str());
     return true;
 #endif
 }
@@ -1537,7 +1526,7 @@ void BluezTransport::central_pump()
         if (central_find_gatt_paths())
         {
             if (central_enable_notify())
-                LOG_DEBUG("[BLUEZ][central] Notifications enabled; ready");
+                LOG_SYSTEM("[BLUEZ][central] Notifications enabled; ready");
         }
         else
         {
@@ -1563,7 +1552,7 @@ void BluezTransport::central_pump()
         else
         {
             impl_->discovery_on.store(false);
-            LOG_INFO("[BLUEZ][central] StopDiscovery OK");
+            LOG_SYSTEM("[BLUEZ][central] StopDiscovery OK");
         }
         sd_bus_error_free(&err);
     }

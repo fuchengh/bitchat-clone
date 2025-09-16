@@ -72,6 +72,13 @@ static void on_line(const std::string &line)
 
 int main()
 {
+    // log level from env var
+    const char *log_level = std::getenv("BITCHAT_LOG_LEVEL");
+    if (log_level)
+    {
+        bitchat::set_log_level_by_name(log_level);
+    }
+
     // Bind transport from env var
     auto tx = make_transport_from_env();
 

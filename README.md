@@ -70,7 +70,7 @@ python ./tui_bitchat.py
 Optional env vars before launching:
 ```bash
 export BITCHAT_PSK="$(openssl rand -hex 32)"       # enable AEAD (recommended)
-export BITCHAT_LOCAL_ID="my-device"                # override top bar ID
+export BITCHAT_USER_ID="my-device"                # override top bar ID
 export BITCHAT_LOG_LEVEL=INFO                      # DEBUG/INFO/WARN/ERROR
 # export BITCHAT_ADAPTER=hci0                      # if you don't use hci0
 ```

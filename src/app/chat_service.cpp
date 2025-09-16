@@ -99,10 +99,8 @@ bool ChatService::start()
         sodium_memzero(tmp_psk.data(), tmp_psk.size());
     local_caps_ = local_has_psk_ ? ctrl::CAP_AEAD_PSK_SUPPORTED : 0;
 
-    // Decide if we run HELLO thread (default: only for bluez, or env override)
-    const char *ctrl_env     = std::getenv("BITCHAT_CTRL_HELLO");
-    const bool  enable_hello = (ctrl_env ? (std::strcmp(ctrl_env, "0") != 0)
-                                         : (tx_.name() == std::string("bluez")));
+    // Decide if we run HELLO thread (enabled if transport = bluez)
+    const bool enable_hello  = (tx_.name() == std::string("bluez"));
     ctrl_hello_enabled_      = enable_hello;
 
     if (!enable_hello)
@@ -154,14 +152,14 @@ bool ChatService::start()
                     hello_sent_ = true;
                     if (local_has_psk_)
                     {
-                        LOG_INFO("[CTRL] HELLO out: user='%s' caps=0x%08x na32=%02x%02x...",
-                                 local_user_.c_str(), local_caps_, (unsigned)na32_[0],
-                                 (unsigned)na32_[1]);
+                        LOG_SYSTEM("[CTRL] HELLO out: user='%s' caps=0x%08x na32=%02x%02x...",
+                                   local_user_.c_str(), local_caps_, (unsigned)na32_[0],
+                                   (unsigned)na32_[1]);
                     }
                     else
                     {
-                        LOG_INFO("[CTRL] HELLO out: user='%s' caps=0x%08x na32=(none)",
-                                 local_user_.c_str(), local_caps_);
+                        LOG_SYSTEM("[CTRL] HELLO out: user='%s' caps=0x%08x na32=(none)",
+                                   local_user_.c_str(), local_caps_);
                     }
                 }
             }
@@ -254,14 +252,14 @@ void ChatService::on_rx(const transport::Frame &f)
             maybe_kex();
             if (h.has_na32)
             {
-                LOG_INFO("[CTRL] HELLO in: user='%s' caps=0x%08x na32=%02x%02x...",
-                         (peer_user_.empty() ? "<none>" : peer_user_.c_str()), peer_caps_,
-                         (unsigned)peer_na32_[0], (unsigned)peer_na32_[1]);
+                LOG_SYSTEM("[CTRL] HELLO in: user='%s' caps=0x%08x na32=%02x%02x...",
+                           (peer_user_.empty() ? "<none>" : peer_user_.c_str()), peer_caps_,
+                           (unsigned)peer_na32_[0], (unsigned)peer_na32_[1]);
             }
             else
             {
-                LOG_INFO("[CTRL] HELLO in: user='%s' caps=0x%08x na32=(none)",
-                         (peer_user_.empty() ? "<none>" : peer_user_.c_str()), peer_caps_);
+                LOG_SYSTEM("[CTRL] HELLO in: user='%s' caps=0x%08x na32=(none)",
+                           (peer_user_.empty() ? "<none>" : peer_user_.c_str()), peer_caps_);
             }
 
             return;  // successfully parsed hello packet
@@ -290,7 +288,7 @@ void ChatService::on_rx(const transport::Frame &f)
 
     if (tail_enabled_.load(std::memory_order_relaxed))
     {
-        LOG_INFO("[RECV] %.*s", (int)plain.size(), (const char *)plain.data());
+        LOG_SYSTEM("[RECV] %.*s", (int)plain.size(), (const char *)plain.data());
         return;
     }
 }
@@ -391,7 +389,7 @@ void ChatService::derive_and_install()
     std::vector<uint8_t> psk;
     if (!parse_psk_env(std::getenv("BITCHAT_PSK"), psk) || psk.empty())
     {
-        LOG_WARN("[KEX] no/invalid PSK; aborting");
+        LOG_SYSTEM("[KEX] no/invalid PSK; aborting");
         return;
     }
 
@@ -400,7 +398,7 @@ void ChatService::derive_and_install()
     if (crypto_kdf_hkdf_sha256_extract(prk.data(), psk.empty() ? nullptr : psk.data(), psk.size(),
                                        ikm.data(), ikm.size()) != 0)
     {
-        LOG_WARN("[KEX] HKDF-Extract failed");
+        LOG_SYSTEM("[KEX] HKDF-Extract failed");
         sodium_memzero(ikm.data(), ikm.size());
         return;
     }
@@ -416,7 +414,7 @@ void ChatService::derive_and_install()
         crypto_kdf_hkdf_sha256_expand(keys.n24_p2c.data(), keys.n24_p2c.size(), CTX_N_P2C,
                                       sizeof(CTX_N_P2C) - 1, prk.data()) != 0)
     {
-        LOG_WARN("[KEX] HKDF-Expand failed");
+        LOG_SYSTEM("[KEX] HKDF-Expand failed");
         sodium_memzero(prk.data(), prk.size());
         sodium_memzero(ikm.data(), ikm.size());
         sodium_memzero(keys.ke_c2p.data(), keys.ke_c2p.size());
@@ -437,11 +435,11 @@ void ChatService::derive_and_install()
     if (aead_.set_session(&k_local))
     {
         aead_on_ = true;
-        LOG_INFO("[KEX] complete. AEAD is now enabled");
+        LOG_SYSTEM("[KEX] complete. AEAD is now enabled");
     }
     else
     {
-        LOG_WARN("[KEX] install failed. Staying plaintext");
+        LOG_SYSTEM("[KEX] install failed. Staying plaintext");
     }
 
     sodium_memzero(prk.data(), prk.size());
