@@ -18,9 +18,12 @@ For build dependencies:
 sudo apt-get update
 sudo apt-get install -y \
   build-essential cmake pkg-config \
-  libsodium-dev libsystemd-dev \
+  libsystemd-dev \
   bluez
 ```
+
+- libsodium: requires latest version (1.0.20)
+  - Install guide [https://doc.libsodium.org/installation](https://doc.libsodium.org/installation)
 
 Python (for TUI):
 ```bash
@@ -120,7 +123,9 @@ export BITCHAT_PSK="$(openssl rand -hex 32)"
 - `BITCHAT_PSK` = 64 hex chars (32 bytes).
 - Wire format: `[24B nonce | ciphertext || tag]`.
 - AEAD is applied **before** fragmentation. Reassembly happens **before** decryption.
-> ⚠️ Without `BITCHAT_PSK`, traffic is **not** encrypted
+> ⚠️ Without `BITCHAT_PSK`, traffic is **NOT** encrypted
+
+> ⚠️ If PSK mismatched on local/peer, all messages will be dropped
 
 ## Expected daemon log snippets (with BlueZ enabled)
 
