@@ -1,3 +1,6 @@
+# Git configs
+.gitconfig
+
 # Prerequisites
 *.d
 
@@ -57,3 +60,4 @@ daemon.log
 
 # Python
 .venv
+
