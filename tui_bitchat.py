@@ -141,8 +141,7 @@ class DaemonProc:
             os.environ.get("BITCHAT_TUI_LOG_DIR", "~/.cache/bitchat-clone/logs")
         )
         os.makedirs(self.log_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.log_path = os.path.join(self.log_dir, f"{self.role}-{ts}.log")
+        self.log_path = os.path.join(self.log_dir, f"{self.role}.log")
         # Open as line-buffered text file
         try:
             self.log_fp = open(self.log_path, "a", encoding="utf-8", buffering=1)

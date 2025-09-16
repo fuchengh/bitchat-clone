@@ -164,10 +164,11 @@ static int chr_prop_Flags(sd_bus * /*bus*/,
         r = sd_bus_message_open_container(reply, 'a', "s");
         if (r < 0)
             return r;
-        r = sd_bus_message_append_basic(reply, 's', "write");
+        // RX characteristic: write + write-without-response (enable ATT Write Command)
+        r = sd_bus_message_append(reply, "s", "write");
         if (r < 0)
             return r;
-        r = sd_bus_message_append_basic(reply, 's', "write-without-response");
+        r = sd_bus_message_append(reply, "s", "write-without-response");
         if (r < 0)
             return r;
         return sd_bus_message_close_container(reply);
