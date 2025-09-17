@@ -102,7 +102,10 @@ set(TRANSPORT_SRCS src/transport/loopback_transport.cpp)
 
 # On Linux, always build the BlueZ transport stub. It has no external headers yet.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  list(APPEND TRANSPORT_SRCS src/transport/bluez_transport.cpp)
+  list(APPEND TRANSPORT_SRCS 
+    src/transport/bluez_transport.cpp
+    src/transport/bluez_transport_central.cpp
+    src/transport/bluez_transport_peripheral.cpp)
   # If BlueZ dev package exists, link it
   if (PkgConfig_FOUND)
     pkg_check_modules(BLUEZ QUIET bluez)

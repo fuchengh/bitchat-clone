@@ -83,7 +83,7 @@ inline void logf(Level lv, const char *func, const char *fmt, ...)
     char ts[16];
     timestamp(ts, sizeof(ts));
 
-    std::fprintf(stderr, "%s| %-7s| %s: ", ts, level_name(lv), func ? func : "?");
+    std::fprintf(stderr, "%s %s %s: ", ts, level_name(lv), func ? func : "?");
 
     va_list ap;
     va_start(ap, fmt);
