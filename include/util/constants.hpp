@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-#include "util/log.hpp"
+#include "log.hpp"
 
 namespace constants
 {

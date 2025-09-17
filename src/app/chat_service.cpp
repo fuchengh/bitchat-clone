@@ -282,7 +282,7 @@ void ChatService::on_rx(const transport::Frame &f)
     std::vector<std::uint8_t> plain;
     if (!aead_.open(*full, AAD, sizeof(AAD), plain))
     {
-        LOG_WARN("[SEC] AEAD decrypt failed (PSK mismatch?) — dropping frame");
+        LOG_SYSTEM("[SEC] AEAD decrypt failed (PSK mismatch?) — dropping frame");
         return;
     }
 
