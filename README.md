@@ -52,13 +52,13 @@ cmake --build build -j
 
 Default control socket (when started manually): `~/.cache/bitchat-clone/ctl.sock`
 > [!NOTE]
-> TUI uses role-specific sockets:  ~/.cache/bitchat-clone/central.sock, ~/.cache/bitchat-clone/peripheral.sock
+> TUI uses role-specific sockets:  `~/.cache/bitchat-clone/[central|peripheral].sock`
 
 ## Quickstart (recommended): TUI
 
 Environment variables: please refer to `.env` file.
 > [!NOTE]
-> Ensure bluetoothd is running on your system.
+> Ensure `bluetoothd` is running on your system.
 
 ```bash
 # 1) Configure and activate .env
@@ -126,8 +126,9 @@ export BITCHAT_PSK="$(openssl rand -hex 32)"
 - Wire format: `[24B nonce | ciphertext || tag]`.
 - AEAD is applied **before** fragmentation. Reassembly happens **before** decryption.
 
-> [!WARNING]
+> [!IMPORTANT]
 > Without `BITCHAT_PSK`, traffic is **NOT** encrypted
+> 
 > If PSK mismatched on local/peer, all messages will be dropped
 
 ## Expected daemon log snippets (with BlueZ enabled)
