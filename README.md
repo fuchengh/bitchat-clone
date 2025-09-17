@@ -2,7 +2,8 @@
 
 Minimal BLE 1:1 end-to-end encrypted messenger
 
-**Features**
+## **Features**
+
 - Minimal TUI (Textual) that runs both daemons and shows chats
 - CLI <-> daemon IPC
 - Fragmentation over small MTU links (12-byte header)
@@ -14,6 +15,7 @@ Minimal BLE 1:1 end-to-end encrypted messenger
 ## Dependencies (Ubuntu/Debian)
 
 For build dependencies:
+
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
@@ -26,6 +28,7 @@ sudo apt-get install -y \
   - Installation guide [https://doc.libsodium.org/installation](https://doc.libsodium.org/installation)
 
 Python (for TUI):
+
 ```bash
 pip install --upgrade pip
 pip install textual rich
@@ -48,11 +51,13 @@ cmake --build build -j
 - CLI: `build/bin/bitchatctl` - talk to daemon via control socket
 
 Default control socket (when started manually): `~/.cache/bitchat-clone/ctl.sock`
+> [!NOTE]
 > TUI uses role-specific sockets:  ~/.cache/bitchat-clone/central.sock, ~/.cache/bitchat-clone/peripheral.sock
 
 ## Quickstart (recommended): TUI
 
 Environment variables: please refer to `.env` file.
+> [!NOTE]
 > Ensure bluetoothd is running on your system.
 
 ```bash
@@ -121,8 +126,9 @@ export BITCHAT_PSK="$(openssl rand -hex 32)"
 - Wire format: `[24B nonce | ciphertext || tag]`.
 - AEAD is applied **before** fragmentation. Reassembly happens **before** decryption.
 
-> ⚠️ Without `BITCHAT_PSK`, traffic is **NOT** encrypted
->> ⚠️ If PSK mismatched on local/peer, all messages will be dropped
+> [!WARNING]
+> Without `BITCHAT_PSK`, traffic is **NOT** encrypted
+> If PSK mismatched on local/peer, all messages will be dropped
 
 ## Expected daemon log snippets (with BlueZ enabled)
 

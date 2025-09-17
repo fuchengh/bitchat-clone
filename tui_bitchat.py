@@ -549,7 +549,7 @@ class DaemonManager:
         peer_disp = "-"
         if self.active_mac and self.active_mac in self.state.peers:
             peer_disp = self.state.peers[self.active_mac].display
-        myid = self.user_id_env or self.local_id
+        myid = self.user_id_env if len(self.user_id_env) != 0 else self.local_id
         return f"My ID: {myid} | central: {c} | peripheral: {p} | peer: {peer_disp} | sec: {sec}"
 
     async def _wait_sock(self, path: str, timeout: float = 3.0):
