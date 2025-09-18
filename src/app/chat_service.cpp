@@ -100,8 +100,8 @@ bool ChatService::start()
     local_caps_ = local_has_psk_ ? ctrl::CAP_AEAD_PSK_SUPPORTED : 0;
 
     // Decide if we run HELLO thread (enabled if transport = bluez)
-    const bool enable_hello  = (tx_.name() == std::string("bluez"));
-    ctrl_hello_enabled_      = enable_hello;
+    const bool enable_hello = (tx_.name() == std::string("bluez"));
+    ctrl_hello_enabled_     = enable_hello;
 
     if (!enable_hello)
     {
