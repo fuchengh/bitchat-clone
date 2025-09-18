@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-#include "util/log.hpp"
+#include "log.hpp"
 
 namespace constants
 {
@@ -21,10 +21,10 @@ inline constexpr std::string_view RX_UUID =
         return std::string(p);
     }
     // fallback to default
-    const char *home = std::getenv("HOME");
-    std::string base = home && *home ? std::string(home) : "/tmp";
+    const char *home      = std::getenv("HOME");
+    std::string base      = home && *home ? std::string(home) : "/tmp";
     std::string sock_path = base + "/.cache/bitchat-clone/ctl.sock";
-    LOG_INFO("Listening on %s", sock_path.c_str());
+    LOG_SYSTEM("Listening on %s", sock_path.c_str());
     return sock_path;
 }
 

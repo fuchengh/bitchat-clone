@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # tui_bitchat.py
 # Minimal Textual TUI that runs two bitchatd daemons (central & peripheral),
-# tails their logs to build a peer list, and lets you chat with the selected peer.
-# - Top bar shows local ID (adapter MAC or $BITCHAT_LOCAL_ID) and BLE status.
-# - Input is disabled until a peer is selected AND central is "ready" (notify on).
 
 from textual.containers import Horizontal, Vertical, Container
 from textual.widgets import Footer, Static, Input, ListView, ListItem, Label
@@ -67,7 +64,7 @@ class ChatState:
 
 def detect_local_id(adapter: str = "hci0") -> str:
     """Return a human-readable local ID: env override -> sysfs MAC -> hciconfig -> hostname."""
-    env_id = os.environ.get("BITCHAT_LOCAL_ID")
+    env_id = os.environ.get("BITCHAT_USER_ID")
     if env_id:
         return env_id
     sysfs = f"/sys/class/bluetooth/{adapter}/address"
@@ -138,11 +135,10 @@ class DaemonProc:
 
         # Prepare log file path (one per daemon start)
         self.log_dir = os.path.expanduser(
-            os.environ.get("BITCHAT_TUI_LOG_DIR", "~/.cache/bitchat-clone/logs")
+            os.environ.get("BITCHAT_LOG_PATH", "~/.cache/bitchat-clone/logs")
         )
         os.makedirs(self.log_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.log_path = os.path.join(self.log_dir, f"{self.role}-{ts}.log")
+        self.log_path = os.path.join(self.log_dir, f"{self.role}.log")
         # Open as line-buffered text file
         try:
             self.log_fp = open(self.log_path, "a", encoding="utf-8", buffering=1)
@@ -511,7 +507,7 @@ class DaemonManager:
         self.central = DaemonProc(
             "central",
             "~/.cache/bitchat-clone/central.sock",
-            env_extra={"BITCHAT_PEER_ADDR": peer_mac},
+            env_extra={"BITCHAT_PEER": peer_mac},
         )
         self.central_connected = False
         self.central_ready = False
@@ -553,7 +549,7 @@ class DaemonManager:
         peer_disp = "-"
         if self.active_mac and self.active_mac in self.state.peers:
             peer_disp = self.state.peers[self.active_mac].display
-        myid = self.user_id_env or self.local_id
+        myid = self.user_id_env if len(self.user_id_env) != 0 else self.local_id
         return f"My ID: {myid} | central: {c} | peripheral: {p} | peer: {peer_disp} | sec: {sec}"
 
     async def _wait_sock(self, path: str, timeout: float = 3.0):

@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <errno.h>
 #include <mutex>
@@ -106,18 +107,36 @@ struct BluezTransport::Impl
     std::atomic_bool services_resolved{false};
     std::atomic_bool discover_submitted{false};
     uint64_t         next_connect_at_ms{0};
+    // inter-fragment pause in ms
+    uint32_t tx_pause_ms{100};
 
     std::atomic_bool notifying{false};  // TX notify state
     std::string      unique_name;       // our bus unique name (debug)
 };
 
-BluezTransport::BluezTransport(BluezConfig cfg) : cfg_(std::move(cfg)) {}
+BluezTransport::BluezTransport(BluezConfig cfg) : cfg_(std::move(cfg))
+{
+    // select role handlers
+    if (cfg_.role == Role::Peripheral)
+    {
+        start_role_ = &BluezTransport::start_peripheral;
+        stop_role_  = &BluezTransport::stop_peripheral;
+        send_role_  = &BluezTransport::send_peripheral_impl;
+    }
+    else
+    {
+        start_role_ = &BluezTransport::start_central;
+        stop_role_  = &BluezTransport::stop_central;
+        send_role_  = &BluezTransport::send_central_impl;
+    }
+}
 
 BluezTransport::~BluezTransport()
 {
     stop();
 }
 
+// ============== Impl accessors ==============
 const std::string &BluezTransport::tx_path() const
 {
     return impl_->tx_path;
@@ -142,7 +161,6 @@ const std::string &BluezTransport::unique_name() const
 {
     return impl_->unique_name;
 }
-
 bool BluezTransport::tx_notifying() const
 {
     return impl_->notifying.load();
@@ -181,6 +199,26 @@ void BluezTransport::set_uuid_discovery_filter_ok(bool v)
     (void)v;
 #endif
 }
+uint32_t BluezTransport::tx_pause_ms() const
+{
+    return impl_ ? impl_->tx_pause_ms : 0;
+}
+#if BITCHAT_HAVE_SDBUS
+std::mutex &BluezTransport::bus_mu()
+{
+    if (!impl_)
+    {
+        static std::mutex dummy_mu;
+        return dummy_mu;
+    }
+    return impl_->bus_mu;
+}
+sd_bus *BluezTransport::bus()
+{
+    return impl_ ? impl_->bus : nullptr;
+}
+#endif
+// ============= End of Impl accessors =============
 
 #if BITCHAT_HAVE_SDBUS
 void BluezTransport::emit_tx_props_changed(const char *prop)
@@ -222,13 +260,25 @@ bool BluezTransport::start(const Settings &s, OnFrame cb)
     if (!impl_)
         impl_ = std::make_unique<Impl>();
 
+    // Env override for mtu_payload to allow faster communication
+    if (const char *e = std::getenv("BITCHAT_MTU_PAYLOAD"))
+    {
+        char         *p = nullptr;
+        unsigned long v = std::strtoul(e, &p, 10);
+        if (p && *p == '\0' && v >= 20 && v <= 244)
+        {
+            settings_.mtu_payload = static_cast<size_t>(v);
+            LOG_INFO("[BLUEZ] mtu_payload overrided, env val = %zu", settings_.mtu_payload);
+        }
+    }
+
     LOG_DEBUG("[BLUEZ] stub start: role=%s adapter=%s mtu_payload=%zu svc=%s tx=%s rx=%s%s%s",
               (cfg_.role == Role::Central ? "central" : "peripheral"), cfg_.adapter.c_str(),
               settings_.mtu_payload, cfg_.svc_uuid.c_str(), cfg_.tx_uuid.c_str(),
               cfg_.rx_uuid.c_str(), cfg_.peer_addr ? " peer=" : "",
               cfg_.peer_addr ? cfg_.peer_addr->c_str() : "");
 
-    bool ok = (cfg_.role == Role::Peripheral) ? start_peripheral() : start_central();
+    bool ok = (this->*start_role_)();
     if (ok)
     {
         running_.store(true, std::memory_order_relaxed);
@@ -246,98 +296,8 @@ bool BluezTransport::send(const Frame &f)
         return false;
     if (f.empty())
         return false;
-
-    // only send when role is central
-    if (cfg_.role == Role::Central)
-    {
-        const size_t len = f.size();
-        if (settings_.mtu_payload > 0 && len > settings_.mtu_payload)
-        {
-            LOG_WARN("[BLUEZ][central] send len=%zu > mtu_payload=%zu (sending anyway)", len,
-                     settings_.mtu_payload);
-        }
-        const bool ok = central_write(f.data(), len);
-        LOG_DEBUG("[BLUEZ][central] send len=%zu %s", len, ok ? "OK" : "FAIL");
-        return ok;
-    }
-
-#if BITCHAT_HAVE_SDBUS
-    if (!impl_ || !impl_->bus)
-    {
-        return false;
-    }
-    if (!tx_notifying())
-    {
-        // notifying not started yet, dropping send
-        LOG_DEBUG("[BLUEZ][peripheral] drop send (Notifying=false)");
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lk(impl_->bus_mu);
-
-    sd_bus_message *sig = nullptr;
-    int             r   = sd_bus_message_new_signal(impl_->bus, &sig, impl_->tx_path.c_str(),
-                                                    "org.freedesktop.DBus.Properties", "PropertiesChanged");
-    if (r < 0)
-    {
-        LOG_WARN("[BLUEZ][peripheral] new PropertiesChanged failed: %s", strerror(-r));
-        return false;
-    }
-    // interface name
-    r = sd_bus_message_append(sig, "s", "org.bluez.GattCharacteristic1");
-    if (r < 0)
-        goto fail;
-    // a{sv} changed properties
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "{sv}");
-    if (r < 0)
-        goto fail;
-    // entry: "Value" -> variant "ay"
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_DICT_ENTRY, "sv");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_append(sig, "s", "Value");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_VARIANT, "ay");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_append_array(sig, 'y', f.data(), f.size());
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);  // variant
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);  // dict entry
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);  // a{sv}
-    if (r < 0)
-        goto fail;
-    // invalidated properties: empty 'as'
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "s");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);
-    if (r < 0)
-        goto fail;
-    // send
-    r = sd_bus_send(impl_->bus, sig, nullptr);
-    sd_bus_message_unref(sig);
-    if (r < 0)
-    {
-        LOG_WARN("[BLUEZ][peripheral] notify send failed: %s", strerror(-r));
-        return false;
-    }
-    LOG_DEBUG("[BLUEZ][peripheral] notify len=%zu sent", (size_t)f.size());
-    return true;
-fail:
-    if (sig)
-        sd_bus_message_unref(sig);
-    LOG_WARN("[BLUEZ][peripheral] build PropertiesChanged(Value) failed: %s", strerror(-r));
-    return false;
-#else
-    return false;
-#endif
+    // Role-dispatch
+    return (this->*send_role_)(f);
 }
 
 void BluezTransport::stop()
@@ -348,10 +308,7 @@ void BluezTransport::stop()
     if (!impl_)
         return;
 
-    if (cfg_.role == Role::Peripheral)
-        stop_peripheral();
-    else
-        stop_central();
+    (this->*stop_role_)();
 
     LOG_DEBUG("[BLUEZ] stub stop");
     impl_.reset();
@@ -993,13 +950,13 @@ bool BluezTransport::central_cold_scan()
         set_dev_path(found_path.c_str());
         if (have_rssi)
         {
-            LOG_DEBUG("[BLUEZ][central] cold-scan found %s addr=%s rssi=%d (svc hit)",
-                      found_path.c_str(), addr.empty() ? "?" : addr.c_str(), (int)rssi);
+            LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s rssi=%d (svc hit)",
+                       found_path.c_str(), addr.empty() ? "?" : addr.c_str(), (int)rssi);
         }
         else
         {
-            LOG_DEBUG("[BLUEZ][central] cold-scan found %s addr=%s (svc hit)", found_path.c_str(),
-                      addr.empty() ? "?" : addr.c_str());
+            LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s (svc hit)", found_path.c_str(),
+                       addr.empty() ? "?" : addr.c_str());
         }
     }
 
@@ -1042,7 +999,7 @@ bool BluezTransport::central_start_discovery()
     }
     sd_bus_error_free(&err);
     impl_->discovery_on.store(true);
-    LOG_INFO("[BLUEZ][central] StartDiscovery OK on %s", impl_->adapter_path.c_str());
+    LOG_SYSTEM("[BLUEZ][central] StartDiscovery OK on %s", impl_->adapter_path.c_str());
     return true;
 #endif
 }
@@ -1051,22 +1008,27 @@ bool BluezTransport::connected() const
 {
     return impl_->connected.load();
 }
+
 void BluezTransport::set_connected(bool v)
 {
     impl_->connected.store(v);
 }
+
 bool BluezTransport::subscribed() const
 {
     return impl_->subscribed.load();
 }
+
 void BluezTransport::set_subscribed(bool v)
 {
     impl_->subscribed.store(v);
 }
+
 void BluezTransport::set_connect_inflight(bool v)
 {
     impl_->connect_inflight.store(v);
 }
+
 void BluezTransport::set_next_connect_at_ms(uint64_t new_ms)
 {
     impl_->next_connect_at_ms = new_ms;
@@ -1336,7 +1298,7 @@ bool BluezTransport::central_enable_notify()
     }
     sd_bus_error_free(&err);
     set_subscribed(true);
-    LOG_INFO("[BLUEZ][central] Notifications enabled on %s", impl_->r_tx_path.c_str());
+    LOG_SYSTEM("[BLUEZ][central] Notifications enabled on %s", impl_->r_tx_path.c_str());
     return true;
 #endif
 }
@@ -1506,7 +1468,7 @@ void BluezTransport::central_pump()
         if (central_find_gatt_paths())
         {
             if (central_enable_notify())
-                LOG_DEBUG("[BLUEZ][central] Notifications enabled; ready");
+                LOG_SYSTEM("[BLUEZ][central] Notifications enabled; ready");
         }
         else
         {
@@ -1532,7 +1494,7 @@ void BluezTransport::central_pump()
         else
         {
             impl_->discovery_on.store(false);
-            LOG_INFO("[BLUEZ][central] StopDiscovery OK");
+            LOG_SYSTEM("[BLUEZ][central] StopDiscovery OK");
         }
         sd_bus_error_free(&err);
     }

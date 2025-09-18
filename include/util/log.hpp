@@ -14,12 +14,13 @@ enum class Level
     Debug   = 0,
     Info    = 1,
     Warning = 2,
-    Error   = 3
+    Error   = 3,
+    System  = 4  // for internal use only (parsed by tui)
 };
 
 inline Level &global_level()
 {
-    static Level lv = Level::Debug;  // TODO: change to info later
+    static Level lv = Level::Debug;
     return lv;
 }
 
@@ -29,16 +30,19 @@ inline void set_log_level(Level lv)
 }
 
 // Allow callers to pass string literals or other non-owning strings.
-inline void set_log_level_by_name(std::string_view name)
+inline void set_log_level_by_name(const char *name)
 {
-    if (name == "debug")
+    std::string level = std::string(name);
+    if (level == "debug" || level == "DEBUG")
         set_log_level(Level::Debug);
-    else if (name == "info")
+    else if (level == "info" || level == "INFO")
         set_log_level(Level::Info);
-    else if (name == "warn" || name == "warning")
+    else if (level == "warn" || level == "warning" || level == "WARN" || level == "WARNING")
         set_log_level(Level::Warning);
-    else if (name == "error")
+    else if (level == "error" || level == "err" || level == "ERROR" || level == "ERR")
         set_log_level(Level::Error);
+    else
+        set_log_level(Level::Info);  // default
 }
 
 inline const char *level_name(Level lv)
@@ -53,6 +57,8 @@ inline const char *level_name(Level lv)
             return "[WARN]";
         case Level::Error:
             return "[ERROR]";
+        case Level::System:
+            return "[SYSTEM]";
     }
     return "?";
 }
@@ -77,7 +83,7 @@ inline void logf(Level lv, const char *func, const char *fmt, ...)
     char ts[16];
     timestamp(ts, sizeof(ts));
 
-    std::fprintf(stderr, "%s| %-7s| %s: ", ts, level_name(lv), func ? func : "?");
+    std::fprintf(stderr, "%s %s %s: ", ts, level_name(lv), func ? func : "?");
 
     va_list ap;
     va_start(ap, fmt);
@@ -93,5 +99,6 @@ inline void logf(Level lv, const char *func, const char *fmt, ...)
 #define LOG_INFO(...) ::bitchat::logf(::bitchat::Level::Info, __func__, __VA_ARGS__)
 #define LOG_WARN(...) ::bitchat::logf(::bitchat::Level::Warning, __func__, __VA_ARGS__)
 #define LOG_ERROR(...) ::bitchat::logf(::bitchat::Level::Error, __func__, __VA_ARGS__)
+#define LOG_SYSTEM(...) ::bitchat::logf(::bitchat::Level::System, __func__, __VA_ARGS__)
 
 }  // namespace bitchat
