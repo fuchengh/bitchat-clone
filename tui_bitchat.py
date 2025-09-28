@@ -89,7 +89,6 @@ def _resolve_bin(name: str) -> str:
     bin_dir = os.environ.get("BITCHAT_BIN_DIR")
     if bin_dir:
         p = os.path.join(os.path.expanduser(bin_dir), name)
-        print(p)
         if os.path.exists(p):
             return p
     here = os.path.dirname(os.path.abspath(__file__))

@@ -54,11 +54,27 @@ Default control socket (when started manually): `~/.cache/bitchat-clone/ctl.sock
 > [!NOTE]
 > TUI uses role-specific sockets:  `~/.cache/bitchat-clone/[central|peripheral].sock`
 
-## Quickstart (recommended): TUI
+## Quickstart (recommended):
 
-Environment variables: please refer to `.env` file.
 > [!NOTE]
 > Ensure `bluetoothd` is running on your system.
+
+1. Download binaries from [Releases](https://github.com/fuchengh/bitchat-clone/releases)
+2. (Optional) Configure `config` file (copied from `.env`)
+3. Start bitchat with launcher: `./bitchat.sh`
+
+Config: please refer to `.env` file.
+
+TUI:
+- Left panel = discovered peers.
+- Middle = chat window.
+- Input is **disabled** until a peer is selected and central is `ready`.
+- Top bar shows: My ID and BLE status.
+- Press q (or ctrl-q) to quit.
+
+## Quickstart (manual)
+
+### Python TUI
 
 ```bash
 # 1) Configure and activate .env
@@ -68,13 +84,7 @@ source .env
 python ./tui_bitchat.py
 ```
 
-- Left panel = discovered peers.
-- Middle = chat window.
-- Input is **disabled** until a peer is selected and central is `ready`.
-- Top bar shows: My ID and BLE status.
-- Press q (or ctrl-q) to quit.
-
-## Quickstart (manual, without TUI)
+### Manual daemon + CLI
 
 Terminal A - start peripheral role:
 
