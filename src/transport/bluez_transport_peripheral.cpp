@@ -1,7 +1,32 @@
-// =============================================================================
-// PERIPHERAL ROLE IMPLEMENTATION
-// GATT/ADV object export / StartNotify/StopNotify / WriteValue / notify fast-path
-// ============================================================================
+/* ======================================================================
+ * BlueZ Peripheral — normal path
+ *
+ *  App thread                       Bus thread                 BlueZ/DBus           Peer (Central)
+ *  ----------                       -----------                -----------          --------------
+ *  start_peripheral()
+ *    └─ export Service / TX / RX
+ *    └─ register advertisement ──────────────────────────────────────────────────▶  LEAdvertisingManager1.RegisterAdvertisement
+ *    └─ spawn bus loop
+ *
+ *                                   ◀──────────────────────── Connect from central
+ *                                   ◀───── StartNotify on TX ─────────────────────  GattCharacteristic1.StartNotify
+ *                                      └─ set Notifying=true
+ *                                      └─ emit PropertiesChanged(Notifying)
+ *
+ *  Data
+ *  send_peripheral(data)
+ *    └─ emit PropertiesChanged(Value=ay on TX) ──────────────────────────────────▶  notify central
+ *
+ *                                   ◀────── WriteValue on RX ────────────────────  GattCharacteristic1.WriteValue
+ *                                      └─ deliver_rx_bytes to app
+ *
+ *  Teardown
+ *  stop_peripheral()
+ *    └─ unexport objects / unregister ADV ───────────────────────────────────────▶  cleanup
+ *
+ *  Ready condition: tx_notifying() == true
+ *  DBus calls on app thread are under impl_->bus_mu
+ * ====================================================================== */
 
 #include <cstring>
 #include <mutex>

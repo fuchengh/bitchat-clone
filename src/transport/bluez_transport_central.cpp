@@ -1,17 +1,31 @@
-// =============================================================================
-// CENTRAL ROLE IMPLEMENTATION
-// connect / discover / find GATT / enable notify / write / pump loop
-//
-// PUMP STATE MACHINE
-//   1) If not connected: clear r_svc/r_tx/r_rx paths and discovery flags.
-//   2) If dev_path empty: central_cold_scan() to seed target.
-//   3) If have dev_path and !connected && !connect_inflight: central_connect()
-//   4) If connected but not subscribed:
-//        - wait ServicesResolved or central_discover_services()
-//        - central_find_gatt_paths()
-//        - central_enable_notify()
-//   5) After subscribed: StopDiscovery if still running.
-// =============================================================================
+/* ======================================================================
+ * BlueZ Central — normal path
+ *
+ *  App thread                       Bus thread                 BlueZ/DBus           Peer (Peripheral)
+ *  ----------                       -----------                -----------          ------------------
+ *  start_central()
+ *    └─ set_discovery_filter ─────────────────────────────────────────────────────▶  Adapter.SetDiscoveryFilter
+ *    └─ start_discovery ──────────────────────────────────────────────────────────▶  Adapter.StartDiscovery
+ *    └─ spawn bus loop
+ *
+ *  central_pump()
+ *    └─ cold_scan (cache) ────────────────────────────────────────────────────────▶  ObjectManager.GetManagedObjects
+ *    └─ if have dev_path → connect ───────────────────────────────────────────────▶  Device1.Connect
+ *                                         ◀── on_connect_reply (success) ──────────
+ *    └─ discover_services ────────────────────────────────────────────────────────▶  Device1.DiscoverServices
+ *                                         ◀── on_props_changed: ServicesResolved=true
+ *    └─ find_gatt_paths (svc/tx/rx from cache)
+ *    └─ enable_notify ────────────────────────────────────────────────────────────▶  GattCharacteristic1.StartNotify
+ *                                         ◀── on_props_changed: Notifying=true
+ *    └─ stop_discovery ───────────────────────────────────────────────────────────▶  Adapter.StopDiscovery
+ *
+ *  Data
+ *    send_central(data) ──────────────────────────────────────────────────────────▶  GattCharacteristic1.WriteValue (peer_rx)
+ *                                         ◀────────────────── notifications (peer_tx → Notifying)
+ *
+ *  Ready condition: connected && subscribed
+ *  DBus calls on app thread are under impl_->bus_mu
+ * ====================================================================== */
 
 #include <chrono>
 #include <cstring>
@@ -1072,6 +1086,12 @@ out:
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_write_frame
+// - In: frame length may exceed mtu_payload (we log and still send)
+// - Out: true if write path succeeds
+// - Note: thin wrapper over central_write and optional TX pause
+// ======================================================================
 bool BluezTransport::central_write_frame(const Frame &f)
 {
     const size_t len = f.size();
