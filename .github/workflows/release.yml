@@ -1,0 +1,178 @@
+name: release
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [amd64, aarch64]
+    env:
+      SODIUM_VER: "1.0.20"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set SODIUM_PREFIX
+        run: |
+          echo "SODIUM_PREFIX=$HOME/.local/libsodium-${SODIUM_VER}-${{ matrix.target }}" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.local/libsodium-${SODIUM_VER}-${{ matrix.target }}"
+
+      # -------------------- deps: amd64 --------------------
+      - name: Install deps (amd64)
+        if: matrix.target == 'amd64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config ccache \
+            libbluetooth-dev libsystemd-dev \
+            curl autoconf automake libtool m4
+
+      # -------------------- deps: aarch64 with ports.ubuntu.com --------------------
+      - name: Install deps (aarch64)
+        if: matrix.target == 'aarch64'
+        run: |
+          set -euxo pipefail
+          sudo dpkg --add-architecture arm64
+          . /etc/os-release
+          echo "Using suite: $UBUNTU_CODENAME"
+          sudo tee /etc/apt/sources.list.d/arm64.list >/dev/null <<EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main universe multiverse restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-updates main universe multiverse restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-backports main universe multiverse restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-security main universe multiverse restricted
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build pkg-config ccache \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libbluetooth-dev:arm64 libsystemd-dev:arm64 \
+            curl autoconf automake libtool m4
+
+      - name: Cache libsodium (${{ env.SODIUM_VER }} - ${{ matrix.target }})
+        id: cache-sodium
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SODIUM_PREFIX }}
+          key: ${{ runner.os }}-libsodium-${{ env.SODIUM_VER }}-${{ matrix.target }}
+
+      - name: Build & install libsodium (${{ env.SODIUM_VER }}) for ${{ matrix.target }}
+        if: steps.cache-sodium.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          curl -L -o sodium.tar.gz https://download.libsodium.org/libsodium/releases/libsodium-${SODIUM_VER}.tar.gz
+          tar xf sodium.tar.gz
+          cd libsodium-${SODIUM_VER}
+          echo "Using SODIUM_PREFIX=${SODIUM_PREFIX}"
+          mkdir -p "${SODIUM_PREFIX}"
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            export CC=aarch64-linux-gnu-gcc
+            export CXX=aarch64-linux-gnu-g++
+            export AR=aarch64-linux-gnu-ar
+            export RANLIB=aarch64-linux-gnu-ranlib
+            ./configure --host=aarch64-linux-gnu --prefix="${SODIUM_PREFIX}"
+          else
+            ./configure --prefix="${SODIUM_PREFIX}"
+          fi
+          make -j"$(nproc)"
+          make install
+
+      - name: Export libsodium env
+        run: |
+          # Prefer correct-arch pkgconfig (plus our custom libsodium .pc)
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            echo "PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig" >> "$GITHUB_ENV"
+          else
+            echo "PKG_CONFIG_LIBDIR=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig" >> "$GITHUB_ENV"
+          fi
+          echo "PKG_CONFIG_PATH=${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${SODIUM_PREFIX}/lib:${SODIUM_PREFIX}/lib64:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=${SODIUM_PREFIX}/lib:${SODIUM_PREFIX}/lib64:${LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${SODIUM_PREFIX}:${CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
+          echo "C_INCLUDE_PATH=${SODIUM_PREFIX}/include:${C_INCLUDE_PATH}" >> "$GITHUB_ENV"
+          echo "CPLUS_INCLUDE_PATH=${SODIUM_PREFIX}/include:${CPLUS_INCLUDE_PATH}" >> "$GITHUB_ENV"
+
+      - name: Configure (Release, BlueZ ON)
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBITCHAT_WERROR=ON \
+            -DBITCHAT_WITH_BLUEZ=ON \
+            $( if [ "${{ matrix.target }}" = "aarch64" ]; then
+                 echo "-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+                       -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+                       -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+                       -DCMAKE_AR=aarch64-linux-gnu-ar \
+                       -DCMAKE_RANLIB=aarch64-linux-gnu-ranlib"
+               fi )
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Package (zip with tui + 2 bins)
+        run: |
+          set -euxo pipefail
+          cd build
+          OUT="bitchat-${{ matrix.target }}-${GITHUB_REF_NAME}"
+          mkdir -p "release/$OUT/bin" "release/$OUT/tui"
+
+          cp -a ./bin/bitchatd ./bin/bitchatctl "release/$OUT/bin/"
+
+          cp -a ../tui/tui_bitchat.py "release/$OUT/tui/" || cp -a tui/tui_bitchat.py "release/$OUT/tui/"
+          cat > "release/$OUT/tui/bitchat-tui.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+          export BITCHAT_BIN_DIR="${ROOT}/bin"
+          if ! python3 -c "import textual" >/dev/null 2>&1; then
+            python3 -m pip install --user textual
+          fi
+          exec python3 "${ROOT}/tui/tui_bitchat.py"
+          SH
+          chmod +x "release/$OUT/tui/bitchat-tui.sh"
+
+          # Zip files
+          cd release
+          zip -r "${OUT}.zip" "$OUT"
+          ls -lah "${OUT}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitchat-${{ matrix.target }}-${{ github.ref_name }}
+          path: build/release/*.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/bitchat-amd64-${{ github.ref_name }}/*.zip
+            artifacts/bitchat-aarch64-${{ github.ref_name }}/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

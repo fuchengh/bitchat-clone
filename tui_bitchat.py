@@ -84,11 +84,25 @@ def detect_local_id(adapter: str = "hci0") -> str:
         pass
     return os.uname().nodename
 
+def _resolve_bin(name: str) -> str:
+    """Pick binary path: $BITCHAT_BIN_DIR/name -> ../bin/name (relative to this file) -> name in PATH."""
+    bin_dir = os.environ.get("BITCHAT_BIN_DIR")
+    if bin_dir:
+        p = os.path.join(os.path.expanduser(bin_dir), name)
+        print(p)
+        if os.path.exists(p):
+            return p
+    here = os.path.dirname(os.path.abspath(__file__))
+    p2 = os.path.normpath(os.path.join(here, "..", "bin", name))
+    if os.path.exists(p2):
+        return p2
+    return name  # hope PATH has it
+
 
 async def run_bitchatctl(sock_path: str, *args: str) -> None:
     """Run bitchatctl against a given AF_UNIX socket with args like ('send', 'hello')."""
     sock_path = os.path.expanduser(sock_path)
-    cmd = ["./build/bin/bitchatctl", "--sock", sock_path, *args]
+    cmd = [_resolve_bin("bitchatctl"), "--sock", sock_path, *args]
     p = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
@@ -128,7 +142,7 @@ class DaemonProc:
             }
         )
         env.update(self.env_extra or {})
-        cmd = ["./build/bin/bitchatd"]
+        cmd = [_resolve_bin("bitchatd")]
         stdbuf = shutil.which("stdbuf")
         if stdbuf:
             cmd = [stdbuf, "-oL", "-eL"] + cmd  # line-buffer both streams
