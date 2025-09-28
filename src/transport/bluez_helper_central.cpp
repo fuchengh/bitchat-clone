@@ -1,309 +1,18 @@
-// bluez helpers
-#include <cctype>
-#include <cerrno>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <memory>
-#include <vector>
-
-#include "transport/bluez_dbus_util.hpp"
+// include/transport/bluez_helper_central.hpp
 #include "transport/bluez_transport.hpp"
-#include "util/log.hpp"
+#include "transport/bluez_helper_central.hpp"
+#include "transport/bluez_dbus_util.hpp"
+
+#include <string>
+#include <cstring>
 
 #if BITCHAT_HAVE_SDBUS
 #include <systemd/sd-bus.h>
 
-static int on_reg_app_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_error*/)
+namespace transport
 {
-    auto *self = static_cast<transport::BluezTransport *>(userdata);
-    if (sd_bus_message_is_method_error(m, nullptr))
-    {
-        const sd_bus_error *e = sd_bus_message_get_error(m);
-        LOG_ERROR("[BLUEZ] RegisterApplication failed: %s: %s", e && e->name ? e->name : "unknown",
-                  e && e->message ? e->message : "no message");
-    }
-    else
-    {
-        LOG_DEBUG("[BLUEZ] GATT app registered at %s (bus=%s)", self->app_path().c_str(),
-                  self->unique_name().c_str());
-    }
-    return 1;
-}
 
-// Service props
-static int svc_prop_UUID(sd_bus * /*bus*/,
-                         const char * /*path*/,
-                         const char * /*iface*/,
-                         const char * /*prop*/,
-                         sd_bus_message *reply,
-                         void           *userdata,
-                         sd_bus_error * /*ret_err*/)
-{
-    auto *self = static_cast<transport::BluezTransport *>(userdata);
-    return sd_bus_message_append(reply, "s", self->config().svc_uuid.c_str());
-}
-
-static int svc_prop_Primary(sd_bus * /*bus*/,
-                            const char * /*path*/,
-                            const char * /*iface*/,
-                            const char * /*prop*/,
-                            sd_bus_message *reply,
-                            void * /*userdata*/,
-                            sd_bus_error * /*ret_err*/)
-{
-    return sd_bus_message_append(reply, "b", 1);
-}
-
-static int svc_prop_Includes(sd_bus * /*bus*/,
-                             const char * /*path*/,
-                             const char * /*iface*/,
-                             const char * /*prop*/,
-                             sd_bus_message *reply,
-                             void * /*userdata*/,
-                             sd_bus_error * /*ret_err*/)
-{
-    int r = sd_bus_message_open_container(reply, 'a', "o");
-    if (r < 0)
-        return r;
-    return sd_bus_message_close_container(reply);
-}
-
-// Char props
-static int chr_prop_UUID(sd_bus * /*bus*/,
-                         const char *path,
-                         const char * /*iface*/,
-                         const char * /*prop*/,
-                         sd_bus_message *reply,
-                         void           *userdata,
-                         sd_bus_error * /*ret_err*/)
-{
-    auto       *self = static_cast<transport::BluezTransport *>(userdata);
-    std::string p(path);
-    if (p == self->tx_path())
-        return sd_bus_message_append(reply, "s", self->config().tx_uuid.c_str());
-    if (p == self->rx_path())
-        return sd_bus_message_append(reply, "s", self->config().rx_uuid.c_str());
-    return -EINVAL;
-}
-
-static int chr_prop_Service(sd_bus * /*bus*/,
-                            const char * /*path*/,
-                            const char * /*iface*/,
-                            const char * /*prop*/,
-                            sd_bus_message *reply,
-                            void           *userdata,
-                            sd_bus_error * /*ret_err*/)
-{
-    auto *self = static_cast<transport::BluezTransport *>(userdata);
-    return sd_bus_message_append(reply, "o", self->svc_path().c_str());
-}
-
-static int chr_prop_Flags(sd_bus * /*bus*/,
-                          const char *path,
-                          const char * /*iface*/,
-                          const char * /*prop*/,
-                          sd_bus_message *reply,
-                          void           *userdata,
-                          sd_bus_error * /*ret_err*/)
-{
-    auto       *self = static_cast<transport::BluezTransport *>(userdata);
-    std::string p(path);
-    int         r;
-
-    if (p == self->tx_path())
-    {
-        r = sd_bus_message_open_container(reply, 'a', "s");
-        if (r < 0)
-            return r;
-        r = sd_bus_message_append_basic(reply, 's', "notify");
-        if (r < 0)
-            return r;
-        return sd_bus_message_close_container(reply);
-    }
-    else if (p == self->rx_path())
-    {
-        // RX characteristic: write + write-without-response
-        r = sd_bus_message_open_container(reply, 'a', "s");
-        if (r < 0)
-            return r;
-        // RX characteristic: write + write-without-response (enable ATT Write Command)
-        r = sd_bus_message_append(reply, "s", "write");
-        if (r < 0)
-            return r;
-        r = sd_bus_message_append(reply, "s", "write-without-response");
-        if (r < 0)
-            return r;
-        return sd_bus_message_close_container(reply);
-    }
-    return -EINVAL;
-}
-
-static int chr_prop_Notifying(sd_bus * /*bus*/,
-                              const char *path,
-                              const char * /*iface*/,
-                              const char * /*prop*/,
-                              sd_bus_message *reply,
-                              void           *userdata,
-                              sd_bus_error * /*ret_err*/)
-{
-    auto *self = static_cast<transport::BluezTransport *>(userdata);
-    int   b    = (std::string(path) == self->tx_path()) ? (self->tx_notifying() ? 1 : 0) : 0;
-    return sd_bus_message_append(reply, "b", b);
-}
-
-// TX methods
-static int tx_StartNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
-{
-    auto *self = static_cast<transport::BluezTransport *>(userdata);
-    self->set_tx_notifying(true);
-    self->emit_tx_props_changed("Notifying");
-    LOG_DEBUG("[BLUEZ] tx.StartNotify");
-    return sd_bus_reply_method_return(m, "");
-}
-
-static int tx_StopNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
-{
-    auto *self = static_cast<transport::BluezTransport *>(userdata);
-    self->set_tx_notifying(false);
-    self->emit_tx_props_changed("Notifying");
-    LOG_DEBUG("[BLUEZ] tx.StopNotify");
-    return sd_bus_reply_method_return(m, "");
-}
-
-// RX method
-static int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
-{
-    auto       *self = static_cast<transport::BluezTransport *>(userdata);
-    const void *buf  = nullptr;
-    size_t      len  = 0;
-
-    int r = sd_bus_message_read_array(m, 'y', &buf, &len);
-    if (r < 0)
-        return r;
-    LOG_DEBUG("[BLUEZ] rx.WriteValue len=%zu", len);
-
-    uint16_t offset = 0;
-
-    r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sv}");
-    if (r < 0)
-        return r;
-    while ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_DICT_ENTRY, "sv")) > 0)
-    {
-        const char *key = nullptr;
-        if ((r = sd_bus_message_read(m, "s", &key)) < 0)
-            return r;
-
-        if (key && std::strcmp(key, "offset") == 0)
-        {
-            if ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_VARIANT, "q")) < 0)
-                return r;
-            uint16_t off = 0;
-            if ((r = sd_bus_message_read(m, "q", &off)) < 0)
-                return r;
-            offset = off;
-            if ((r = sd_bus_message_exit_container(m)) < 0)
-                return r;
-        }
-        else
-        {
-            if ((r = sd_bus_message_skip(m, "v")) < 0)
-                return r;
-        }
-        if ((r = sd_bus_message_exit_container(m)) < 0)
-            return r;
-    }
-    if (r < 0)
-        return r;
-    if ((r = sd_bus_message_exit_container(m)) < 0)
-        return r;
-
-    if (offset != 0)
-        return sd_bus_reply_method_errorf(m, "org.bluez.Error.InvalidOffset",
-                                          "Offset %u not supported", offset);
-
-    if (self && buf && len != 0)
-        self->deliver_rx_bytes(static_cast<const uint8_t *>(buf), len);
-
-    return sd_bus_reply_method_return(m, "");
-}
-
-// Advertising
-static int adv_Release(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret*/)
-{
-    LOG_DEBUG("[BLUEZ] adv.Release()");
-    return sd_bus_reply_method_return(m, "");
-}
-
-static int adv_prop_Type(sd_bus * /*bus*/,
-                         const char * /*path*/,
-                         const char * /*iface*/,
-                         const char * /*prop*/,
-                         sd_bus_message *reply,
-                         void * /*userdata*/,
-                         sd_bus_error * /*ret*/)
-{
-    return sd_bus_message_append(reply, "s", "peripheral");
-}
-
-static int adv_prop_ServiceUUIDs(sd_bus * /*bus*/,
-                                 const char * /*path*/,
-                                 const char * /*iface*/,
-                                 const char * /*prop*/,
-                                 sd_bus_message *reply,
-                                 void           *userdata,
-                                 sd_bus_error * /*ret*/)
-{
-    auto *self = static_cast<transport::BluezTransport *>(userdata);
-    int   r    = sd_bus_message_open_container(reply, 'a', "s");
-    if (r < 0)
-        return r;
-    r = sd_bus_message_append_basic(reply, 's', self->config().svc_uuid.c_str());
-    if (r < 0)
-        return r;
-    return sd_bus_message_close_container(reply);
-}
-
-static int adv_prop_LocalName(sd_bus * /*bus*/,
-                              const char * /*path*/,
-                              const char * /*iface*/,
-                              const char * /*prop*/,
-                              sd_bus_message *reply,
-                              void * /*userdata*/,
-                              sd_bus_error * /*ret*/)
-{
-    return sd_bus_message_append(reply, "s", "BitChat");
-}
-
-static int adv_prop_IncludeTxPower(sd_bus * /*bus*/,
-                                   const char * /*path*/,
-                                   const char * /*iface*/,
-                                   const char * /*prop*/,
-                                   sd_bus_message *reply,
-                                   void * /*userdata*/,
-                                   sd_bus_error * /*ret*/)
-{
-    return sd_bus_message_append(reply, "b", 0);
-}
-
-static int on_reg_adv_reply(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret*/)
-{
-    if (sd_bus_message_is_method_error(m, nullptr))
-    {
-        const sd_bus_error *e = sd_bus_message_get_error(m);
-        LOG_ERROR("[BLUEZ] RegisterAdvertisement failed: %s: %s",
-                  e && e->name ? e->name : "unknown", e && e->message ? e->message : "no message");
-    }
-    else
-    {
-        LOG_SYSTEM("[BLUEZ] LE advertisement registered successfully");
-    }
-    return 1;
-}
-
-// Central callbacks
-static int on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
+int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);
 
@@ -452,7 +161,29 @@ static int on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*re
     return 0;
 }
 
-static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_error*/)
+int bluez_on_iface_removed(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
+{
+    auto       *self = static_cast<transport::BluezTransport *>(userdata);
+    const char *obj  = nullptr;
+    int         r    = sd_bus_message_read(m, "o", &obj);
+    if (r < 0 || !obj)
+        return r < 0 ? r : -EINVAL;
+    r = sd_bus_message_skip(m, "as");
+    if (r < 0)
+        return r;
+
+    const std::string path(obj);
+    if (!self->dev_path().empty() && self->dev_path() == path)
+    {
+        self->set_connected(false);
+        self->set_subscribed(false);
+        self->set_dev_path("");
+        LOG_SYSTEM("[BLUEZ][central] InterfacesRemoved -> cleared device %s", obj);
+    }
+    return 0;
+}
+
+int bluez_on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_error*/)
 {
     auto       *self  = static_cast<transport::BluezTransport *>(userdata);
     const char *iface = nullptr;
@@ -622,7 +353,7 @@ static int on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*
     return 0;
 }
 
-static int on_connect_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
+int bluez_on_connect_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);
 
@@ -672,26 +403,6 @@ static int on_connect_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*
     return 1;
 }
 
-static int on_iface_removed(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
-{
-    auto       *self = static_cast<transport::BluezTransport *>(userdata);
-    const char *obj  = nullptr;
-    int         r    = sd_bus_message_read(m, "o", &obj);
-    if (r < 0 || !obj)
-        return r < 0 ? r : -EINVAL;
-    r = sd_bus_message_skip(m, "as");
-    if (r < 0)
-        return r;
-
-    const std::string path(obj);
-    if (!self->dev_path().empty() && self->dev_path() == path)
-    {
-        self->set_connected(false);
-        self->set_subscribed(false);
-        self->set_dev_path("");
-        LOG_SYSTEM("[BLUEZ][central] InterfacesRemoved -> cleared device %s", obj);
-    }
-    return 0;
-}
+}  // namespace transport
 
 #endif

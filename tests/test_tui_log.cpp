@@ -71,12 +71,14 @@ TEST(TuiLogs, AllSystemLevel)
         {"StartDiscovery OK", "src/transport/bluez_transport_central.cpp", {"StartDiscovery OK"}},
         {"StopDiscovery OK", "src/transport/bluez_transport_central.cpp", {"StopDiscovery OK"}},
 
-        {"Device connected", "src/transport/bluez_helper.inc", {"Device connected:"}},
-        {"Connected property true", "src/transport/bluez_helper.inc", {"Connected property became true"}},
-        {"Disconnected", "src/transport/bluez_helper.inc", {"Disconnected", "("}},
-        {"InterfacesRemoved", "src/transport/bluez_helper.inc", {"InterfacesRemoved -> cleared device"}},
-        {"LE adv registered", "src/transport/bluez_helper.inc", {"LE advertisement registered successfully"}},
-        {"found peer addr", "src/transport/bluez_helper.inc", {"found ", " addr="}}
+        {"Device connected", "src/transport/bluez_helper_central.cpp", {"Device connected:"}},
+        {"Connected property true", "src/transport/bluez_helper_central.cpp", {"Connected property became true"}},
+        {"Disconnected", "src/transport/bluez_helper_central.cpp", {"Disconnected", "("}},
+        {"InterfacesRemoved", "src/transport/bluez_helper_central.cpp", {"InterfacesRemoved -> cleared device"}},
+        {"found peer addr", "src/transport/bluez_helper_central.cpp", {"found ", " addr="}},
+
+        // role = peripheral
+        {"LE adv registered", "src/transport/bluez_helper_peripheral.cpp", {"LE advertisement registered successfully"}},
         // clang-format on
     };
 

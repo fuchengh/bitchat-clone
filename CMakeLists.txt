@@ -105,7 +105,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
   list(APPEND TRANSPORT_SRCS 
     src/transport/bluez_transport.cpp
     src/transport/bluez_transport_central.cpp
-    src/transport/bluez_transport_peripheral.cpp)
+    src/transport/bluez_transport_peripheral.cpp
+    src/transport/bluez_helper_peripheral.cpp
+    src/transport/bluez_helper_central.cpp)
   # If BlueZ dev package exists, link it
   if (PkgConfig_FOUND)
     pkg_check_modules(BLUEZ QUIET bluez)

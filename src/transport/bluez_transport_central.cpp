@@ -27,8 +27,7 @@
 
 #if BITCHAT_HAVE_SDBUS
 #include <systemd/sd-bus.h>
-#include "bluez_helper.inc"
-
+#include "transport/bluez_helper_central.hpp"
 namespace
 {
 
@@ -321,7 +320,7 @@ bool BluezTransport::central_connect()
         // Always submit Connect()
         int r = sd_bus_call_method_async(impl_->bus, &impl_->connect_call_slot, "org.bluez",
                                          dev_path().c_str(), "org.bluez.Device1", "Connect",
-                                         on_connect_reply, this, "");
+                                         bluez_on_connect_reply, this, "");
         if (r < 0)
         {
             LOG_ERROR("[BLUEZ][central] submit Connect() failed: %s", strerror(-r));
@@ -1044,7 +1043,7 @@ bool BluezTransport::start_central()
     // subscribe signals (iface added/removed)
     r = sd_bus_match_signal(impl_->bus, &impl_->added_slot, "org.bluez", "/",
                             "org.freedesktop.DBus.ObjectManager", "InterfacesAdded",
-                            on_iface_added, this);
+                            bluez_on_iface_added, this);
     if (r < 0)
     {
         LOG_ERROR("[BLUEZ][central] subscribe to InterfacesAdded failed: %d", r);
@@ -1052,7 +1051,7 @@ bool BluezTransport::start_central()
     }
     r = sd_bus_match_signal(impl_->bus, &impl_->removed_slot, "org.bluez", "/",
                             "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved",
-                            on_iface_removed, this);
+                            bluez_on_iface_removed, this);
     if (r < 0)
     {
         LOG_ERROR("[BLUEZ][central] subscribe to InterfacesRemoved failed: %d", r);
@@ -1061,7 +1060,7 @@ bool BluezTransport::start_central()
     // PropertiesChanged (Device1.ServicesResolved / GattCharacteristic1.Value etc.)
     r = sd_bus_match_signal(impl_->bus, &impl_->props_slot, "org.bluez", "/",
                             "org.freedesktop.DBus.Properties", "PropertiesChanged",
-                            on_props_changed, this);
+                            bluez_on_props_changed, this);
     if (r < 0)
     {
         LOG_ERROR("[BLUEZ][central] subscribe to PropertiesChanged failed: %d", r);

@@ -13,59 +13,14 @@
 #include "transport/bluez_transport.hpp"
 #include "transport/bluez_transport_impl.hpp"
 #include "util/log.hpp"
-#include "transport/bluez_dbus_util.hpp"
+#include "transport/bluez_helper_peripheral.hpp"
 // clang-format on
 
 #if BITCHAT_HAVE_SDBUS
 #include <poll.h>
 #include <systemd/sd-bus.h>
 #include <unistd.h>
-#include "bluez_helper.inc"
 
-// clang-format off
-// GattService1 (svc_path)
-static const sd_bus_vtable svc_vtable[] = {
-    SD_BUS_VTABLE_START(0),
-    SD_BUS_PROPERTY("UUID", "s", svc_prop_UUID, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Primary", "b", svc_prop_Primary, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Includes", "ao", svc_prop_Includes, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_VTABLE_END};
-
-// TX char (notify) + Start/StopNotify
-static const sd_bus_vtable tx_vtable[] = {
-    SD_BUS_VTABLE_START(0),
-    // Properties (read-only unless noted)
-    SD_BUS_PROPERTY("UUID", "s", chr_prop_UUID, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Service", "o", chr_prop_Service, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Flags", "as", chr_prop_Flags, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    // Notifying is dynamic (no CONST flag)
-    SD_BUS_PROPERTY("Notifying", "b", chr_prop_Notifying, 0, 0),
-    // Methods (unprivileged)
-    SD_BUS_METHOD("StartNotify", "", "", tx_StartNotify, SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("StopNotify", "", "", tx_StopNotify, SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_VTABLE_END};
-
-// RX char (write)
-static const sd_bus_vtable rx_vtable[] = {
-    SD_BUS_VTABLE_START(0),
-    SD_BUS_PROPERTY("UUID", "s", chr_prop_UUID, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Service", "o", chr_prop_Service, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Flags", "as", chr_prop_Flags, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_METHOD("WriteValue", "aya{sv}", "", rx_WriteValue, SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_VTABLE_END};
-
-// LEAdvertisement1
-static const sd_bus_vtable adv_vtable[] = {
-    SD_BUS_VTABLE_START(0),
-    SD_BUS_PROPERTY("Type", "s", adv_prop_Type, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("ServiceUUIDs", "as", adv_prop_ServiceUUIDs, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("LocalName", "s", adv_prop_LocalName, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("IncludeTxPower", "b", adv_prop_IncludeTxPower, 0, SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_METHOD("Release", "", "", adv_Release, SD_BUS_VTABLE_UNPRIVILEGED), SD_BUS_VTABLE_END};
-#endif
-// clang-format on
-
-#if BITCHAT_HAVE_SDBUS
 namespace
 {
 static bool emit_value_props_changed_ay(sd_bus            *bus,
@@ -164,7 +119,7 @@ bool BluezTransport::start_peripheral()
 
     // Service: org.bluez.GattService1 at /com/bitchat/app/svc0
     r = sd_bus_add_object_vtable(impl_->bus, &impl_->svc_slot, impl_->svc_path.c_str(),
-                                 "org.bluez.GattService1", svc_vtable, /*userdata=*/this);
+                                 "org.bluez.GattService1", gatt_service_vtable, /*userdata=*/this);
     if (r < 0)
     {
         LOG_ERROR("[BLUEZ][peripheral] add service vtable failed: %d", r);
@@ -174,7 +129,7 @@ bool BluezTransport::start_peripheral()
               impl_->svc_path.c_str(), impl_->unique_name.c_str());
     // TX characteristic: org.bluez.GattCharacteristic1 (Flags=["notify"])
     r = sd_bus_add_object_vtable(impl_->bus, &impl_->tx_slot, impl_->tx_path.c_str(),
-                                 "org.bluez.GattCharacteristic1", tx_vtable, /*userdata=*/this);
+                                 "org.bluez.GattCharacteristic1", gatt_tx_vtable, /*userdata=*/this);
     if (r < 0)
     {
         LOG_ERROR("[BLUEZ][peripheral] add TX vtable failed: %d", r);
@@ -182,7 +137,7 @@ bool BluezTransport::start_peripheral()
     }
     // RX characteristic: org.bluez.GattCharacteristic1 (Flags=["write"])
     r = sd_bus_add_object_vtable(impl_->bus, &impl_->rx_slot, impl_->rx_path.c_str(),
-                                 "org.bluez.GattCharacteristic1", rx_vtable, /*userdata=*/this);
+                                 "org.bluez.GattCharacteristic1", gatt_rx_vtable, /*userdata=*/this);
     if (r < 0)
     {
         LOG_ERROR("[BLUEZ][peripheral] add RX vtable failed: %d", r);
