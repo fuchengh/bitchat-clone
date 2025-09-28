@@ -35,6 +35,11 @@ jobs:
       - name: Install deps (amd64)
         if: matrix.target == 'amd64'
         run: |
+          set -euxo pipefail
+          # Remove bad microsoft/azure rpo to prevent 403 error
+          sudo rm -f /etc/apt/sources.list.d/azure-cli*.list /etc/apt/sources.list.d/*microsoft*.list || true
+          sudo sed -i '/packages\.microsoft\.com/d' /etc/apt/sources.list || true
+
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build pkg-config ccache \
