@@ -122,29 +122,6 @@ fail_new:
 namespace transport
 {
 
-// ===== Bus-thread fast path notify =====
-bool BluezTransport::peripheral_notify_ay_from_bus_thread(const uint8_t *data, size_t len)
-{
-#if !BITCHAT_HAVE_SDBUS
-    (void)data;
-    (void)len;
-    return false;
-#else
-    // Called from sd-bus callback thread; DO NOT take bus_mu here.
-    // Sends PropertiesChanged("Value"=ay) on TX characteristic.
-    if (!impl_ || !impl_->bus)
-        return false;
-    if (!tx_notifying())
-        return false;  // central hasn't StartNotify yet
-    bool ok = emit_value_props_changed_ay(impl_->bus, impl_->tx_path, data, len);
-    if (!ok)
-        LOG_WARN("[BLUEZ][peripheral] notify(send) failed");
-    else
-        LOG_DEBUG("[BLUEZ][peripheral] notify(len=%zu) sent (bus-thread)", len);
-    return ok;
-#endif
-}
-
 void BluezTransport::emit_tx_props_changed(const char *prop)
 {
     if (!impl_ || !impl_->bus)
@@ -298,13 +275,13 @@ void BluezTransport::stop_peripheral()
         impl_->loop.join();
 
     // cleanup
-    if (impl_->reg_slot)      { sd_bus_slot_unref(impl_->reg_slot);      impl_->reg_slot = nullptr; }
-    if (impl_->rx_slot)       { sd_bus_slot_unref(impl_->rx_slot);       impl_->rx_slot = nullptr; }
-    if (impl_->tx_slot)       { sd_bus_slot_unref(impl_->tx_slot);       impl_->tx_slot = nullptr; }
-    if (impl_->svc_slot)      { sd_bus_slot_unref(impl_->svc_slot);      impl_->svc_slot = nullptr; }
-    if (impl_->app_slot)      { sd_bus_slot_unref(impl_->app_slot);      impl_->app_slot = nullptr; }
-    if (impl_->adv_call_slot) { sd_bus_slot_unref(impl_->adv_call_slot); impl_->adv_call_slot = nullptr; }
-    if (impl_->adv_obj_slot)  { sd_bus_slot_unref(impl_->adv_obj_slot);  impl_->adv_obj_slot = nullptr; }
+    unref_slot(impl_->reg_slot);
+    unref_slot(impl_->rx_slot);
+    unref_slot(impl_->tx_slot);
+    unref_slot(impl_->svc_slot);
+    unref_slot(impl_->app_slot);
+    unref_slot(impl_->adv_call_slot);
+    unref_slot(impl_->adv_obj_slot);
 
     if (impl_->bus) {
         sd_bus_flush_close_unref(impl_->bus);

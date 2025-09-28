@@ -185,7 +185,7 @@ bool BluezTransport::start(const Settings &s, OnFrame cb)
         }
     }
 
-    LOG_DEBUG("[BLUEZ] stub start: role=%s adapter=%s mtu_payload=%zu svc=%s tx=%s rx=%s%s%s",
+    LOG_DEBUG("[BLUEZ][%s] stub start: adapter=%s mtu_payload=%zu svc=%s tx=%s rx=%s%s%s",
               (cfg_.role == Role::Central ? "central" : "peripheral"), cfg_.adapter.c_str(),
               settings_.mtu_payload, cfg_.svc_uuid.c_str(), cfg_.tx_uuid.c_str(),
               cfg_.rx_uuid.c_str(), cfg_.peer_addr ? " peer=" : "",

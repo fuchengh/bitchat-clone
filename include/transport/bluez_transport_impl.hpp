@@ -46,9 +46,9 @@ struct BluezTransport::Impl
     std::string rx_path  = "/com/bitchat/app/svc0/char_rx";
     // central state
     std::string dev_path;
-    std::string r_svc_path;  // remote service path
-    std::string r_tx_path;   // remote TX characteristic (notify)
-    std::string r_rx_path;   // remote RX characteristic (write)
+    std::string peer_svc_path;  // remote service path
+    std::string peer_tx_path;   // remote TX characteristic (notify)
+    std::string peer_rx_path;   // remote RX characteristic (write)
     // central connection state flags
     std::atomic_bool connected{false};
     std::atomic_bool subscribed{false};

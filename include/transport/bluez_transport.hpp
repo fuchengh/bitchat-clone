@@ -12,6 +12,20 @@
 #include <poll.h>
 #include <systemd/sd-bus.h>
 #include <unistd.h>
+
+namespace
+{
+// TU-local wrapper to unref and null a slot ptr
+inline void unref_slot(sd_bus_slot *&s)
+{
+    if (s)
+    {
+        sd_bus_slot_unref(s);
+        s = nullptr;
+    }
+}
+}  // namespace
+
 #endif
 
 namespace transport
@@ -82,7 +96,6 @@ class BluezTransport final : public ITransport
 
 #if BITCHAT_HAVE_SDBUS
     void emit_tx_props_changed(const char *prop);
-    bool peripheral_notify_ay_from_bus_thread(const uint8_t *data, size_t len);
 #endif
 
   private:
