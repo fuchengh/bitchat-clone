@@ -55,12 +55,16 @@ jobs:
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-backports main universe multiverse restricted
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-security main universe multiverse restricted
           EOF
+          sudo sed -i 's|^deb |deb [arch=amd64] |' /etc/apt/sources.list || true
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build pkg-config ccache \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             libbluetooth-dev:arm64 libsystemd-dev:arm64 \
             curl autoconf automake libtool m4
+
+          dpkg --print-foreign-architectures
+          apt-cache policy libsystemd-dev:arm64 | sed -n '1,12p'
 
       - name: Cache libsodium (${{ env.SODIUM_VER }} - ${{ matrix.target }})
         id: cache-sodium
@@ -135,7 +139,7 @@ jobs:
 
           cp -a ./bin/bitchatd ./bin/bitchatctl "release/$OUT/bin/"
 
-          cp -a ../tui/tui_bitchat.py "release/$OUT/tui/" || cp -a tui/tui_bitchat.py "release/$OUT/tui/"
+          cp -a ../tui_bitchat.py "release/$OUT/tui/" || cp -a tui_bitchat.py "release/$OUT/tui/"
           cat > "release/$OUT/tui/bitchat-tui.sh" <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -144,7 +148,7 @@ jobs:
           if ! python3 -c "import textual" >/dev/null 2>&1; then
             python3 -m pip install --user textual
           fi
-          exec python3 "${ROOT}/tui/tui_bitchat.py"
+          exec python3 "${ROOT}/tui_bitchat.py"
           SH
           chmod +x "release/$OUT/tui/bitchat-tui.sh"
 
