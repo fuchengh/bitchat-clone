@@ -119,13 +119,14 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBITCHAT_WERROR=ON \
             -DBITCHAT_WITH_BLUEZ=ON \
+            -DBUILD_TESTING=OFF \
             $( if [ "${{ matrix.target }}" = "aarch64" ]; then
-                 echo "-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-                       -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-                       -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-                       -DCMAKE_AR=aarch64-linux-gnu-ar \
-                       -DCMAKE_RANLIB=aarch64-linux-gnu-ranlib"
-               fi )
+                echo "-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+                      -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+                      -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+                      -DCMAKE_AR=aarch64-linux-gnu-ar \
+                      -DCMAKE_RANLIB=aarch64-linux-gnu-ranlib"
+              fi )
 
       - name: Build
         run: cmake --build build -j
