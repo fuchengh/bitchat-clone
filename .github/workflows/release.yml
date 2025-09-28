@@ -1,0 +1,181 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [amd64, aarch64]
+    env:
+      SODIUM_VER: "1.0.20"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set SODIUM_PREFIX
+        run: |
+          echo "SODIUM_PREFIX=$HOME/.local/libsodium-${SODIUM_VER}-${{ matrix.target }}" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/.local/libsodium-${SODIUM_VER}-${{ matrix.target }}"
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          case "${{ matrix.target }}" in
+            amd64)
+              sudo apt-get install -y \
+                build-essential cmake ninja-build pkg-config ccache \
+                libbluetooth-dev libsystemd-dev \
+                curl autoconf automake libtool m4
+              ;;
+            aarch64)
+              sudo dpkg --add-architecture arm64
+              sudo apt-get update
+              sudo apt-get install -y \
+                build-essential cmake ninja-build pkg-config ccache \
+                gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+                libbluetooth-dev:arm64 libsystemd-dev:arm64 \
+                curl autoconf automake libtool m4
+              ;;
+          esac
+
+      - name: Cache libsodium (${{ env.SODIUM_VER }} - ${{ matrix.target }})
+        id: cache-sodium
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SODIUM_PREFIX }}
+          key: ${{ runner.os }}-libsodium-${{ env.SODIUM_VER }}-${{ matrix.target }}
+
+      - name: Build & install libsodium (${{ env.SODIUM_VER }}) for ${{ matrix.target }}
+        if: steps.cache-sodium.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          curl -L -o sodium.tar.gz https://download.libsodium.org/libsodium/releases/libsodium-${SODIUM_VER}.tar.gz
+          tar xf sodium.tar.gz
+          cd libsodium-${SODIUM_VER}
+          echo "Using SODIUM_PREFIX=${SODIUM_PREFIX}"
+          mkdir -p "${SODIUM_PREFIX}"
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            export CC=aarch64-linux-gnu-gcc
+            export CXX=aarch64-linux-gnu-g++
+            export AR=aarch64-linux-gnu-ar
+            export RANLIB=aarch64-linux-gnu-ranlib
+            ./configure --host=aarch64-linux-gnu --prefix="${SODIUM_PREFIX}"
+          else
+            ./configure --prefix="${SODIUM_PREFIX}"
+          fi
+          make -j"$(nproc)"
+          make install
+
+      - name: Export libsodium env
+        run: |
+          # Let pkg-config find our custom libsodium
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            echo "PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig" >> "$GITHUB_ENV"
+          else
+            echo "PKG_CONFIG_LIBDIR=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig" >> "$GITHUB_ENV"
+          fi
+          echo "PKG_CONFIG_PATH=${SODIUM_PREFIX}/lib/pkgconfig:${SODIUM_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${SODIUM_PREFIX}/lib:${SODIUM_PREFIX}/lib64:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=${SODIUM_PREFIX}/lib:${SODIUM_PREFIX}/lib64:${LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=${SODIUM_PREFIX}:${CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
+          echo "C_INCLUDE_PATH=${SODIUM_PREFIX}/include:${C_INCLUDE_PATH}" >> "$GITHUB_ENV"
+          echo "CPLUS_INCLUDE_PATH=${SODIUM_PREFIX}/include:${CPLUS_INCLUDE_PATH}" >> "$GITHUB_ENV"
+
+      - name: Configure (Release, BlueZ ON)
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBITCHAT_WERROR=ON \
+            -DBITCHAT_WITH_BLUEZ=ON \
+            $( if [ "${{ matrix.target }}" = "aarch64" ]; then
+                 echo "-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+                       -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+                       -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+                       -DCMAKE_AR=aarch64-linux-gnu-ar \
+                       -DCMAKE_RANLIB=aarch64-linux-gnu-ranlib"
+               fi )
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Package artifacts
+        run: |
+          set -euxo pipefail
+          cd build
+          OUT="bitchat-${{ matrix.target }}-${GITHUB_REF_NAME}"
+          mkdir -p "release/$OUT/bin" "release/$OUT/bin-unstripped"
+
+          # Collect executables
+          if [ -d ./bin ]; then
+            find ./bin -maxdepth 1 -type f -perm -111 -exec cp {} "release/$OUT/bin/" \; || true
+          else
+            # If executables are directly in the build root, copy them as well
+            find . -maxdepth 1 -type f -perm -111 -name 'bitchat*' -exec cp {} "release/$OUT/bin/" \; || true
+          fi
+
+          # backup unstripped binaries
+          cp -a "release/$OUT/bin/." "release/$OUT/bin-unstripped/" || true
+
+          # choose strip based on target
+          if [ "${{ matrix.target }}" = "aarch64" ]; then
+            STRIP=aarch64-linux-gnu-strip
+          else
+            STRIP=strip
+          fi
+          find "release/$OUT/bin" -type f -exec $STRIP {} \; || true
+
+          # Dependency list (ldd may fail for aarch64 on x86_64, tolerate)
+          {
+            for f in release/$OUT/bin/*; do
+              if file "$f" | grep -q ELF; then
+                echo "==== $f ===="
+                ldd "$f" || true
+              fi
+            done
+          } > "release/$OUT/ldd.txt" || true
+
+          # Record commit
+          git rev-parse HEAD > "release/$OUT/commit.txt"
+
+          # Package
+          tar -C release -czf "${OUT}.tar.gz" "$OUT"
+          ls -lah "${OUT}.tar.gz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitchat-${{ matrix.target }}-${{ github.ref_name }}
+          path: build/*.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/bitchat-amd64-${{ github.ref_name }}/*.tar.gz
+            artifacts/bitchat-aarch64-${{ github.ref_name }}/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
