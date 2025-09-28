@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake ninja-build pkg-config ccache \
             libbluetooth-dev libsystemd-dev \
-            curl autoconf automake libtool m4
+            curl autoconf automake libtool m4 zip
 
       # -------------------- deps: aarch64 with ports.ubuntu.com --------------------
       - name: Install deps (aarch64)
@@ -66,7 +66,7 @@ jobs:
             build-essential cmake ninja-build pkg-config ccache \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             libbluetooth-dev:arm64 libsystemd-dev:arm64 \
-            curl autoconf automake libtool m4
+            curl autoconf automake libtool m4 zip
 
           dpkg --print-foreign-architectures
           apt-cache policy libsystemd-dev:arm64 | sed -n '1,12p'
@@ -143,7 +143,15 @@ jobs:
           set -euxo pipefail
           cd build
           OUT="bitchat-${{ matrix.target }}-${GITHUB_REF_NAME}"
+
+          # Binaries
           mkdir -p "release/$OUT/bin" "release/$OUT/tui"
+
+          # Collect deps
+          mkdir -p "release/$OUT/tui/wheels"
+          python3 -m pip download --only-binary=:all: \
+            --dest "release/$OUT/tui/wheels" \
+            textual
 
           cp -a ./bin/bitchatd ./bin/bitchatctl "release/$OUT/bin/"
 
@@ -156,19 +164,50 @@ jobs:
           exit 1
           fi
 
-          cat > "release/$OUT/tui/bitchat-tui.sh" <<'SH'
+          # Launcher script
+          cat > "release/$OUT/bitchat.sh" <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
-          ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
-          export BITCHAT_BIN_DIR="${ROOT}/bin"
-          if ! python3 -c "import textual" >/dev/null 2>&1; then
-            python3 -m pip install --user textual
+          ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          if [ -f "${ROOT}/config" ]; then
+            set -a
+            . "${ROOT}/config"
+            set +a
           fi
-          exec python3 "${ROOT}/tui/tui_bitchat.py"
+          export BITCHAT_BIN_DIR="${ROOT}/bin"
+          PY="${PYTHON:-python3}"
+          VENV_DIR="${ROOT}/.venv"
+          WHEELS_DIR="${ROOT}/tui/wheels"
+          have_cmd() { command -v "$1" >/dev/null 2>&1; }
+          if ! have_cmd "$PY"; then
+            echo "FATAL: python3 not found. Install python3 first." >&2; exit 1
+          fi
+          if [ ! -d "$VENV_DIR" ]; then
+            if ! "$PY" -m venv "$VENV_DIR" 2>/dev/null; then
+              echo "python3 venv module missing." >&2
+              if have_cmd apt-get; then echo "Try: sudo apt-get install -y python3-venv" >&2; fi
+              if have_cmd dnf; then echo "Try: sudo dnf install python3-virtualenv" >&2; fi
+              if have_cmd pacman; then echo "Try: sudo pacman -S python-virtualenv" >&2; fi
+              exit 1
+            fi
+          fi
+          VPY="${VENV_DIR}/bin/python"; PIP="${VENV_DIR}/bin/pip"
+          "$VPY" -m pip install --upgrade pip wheel >/dev/null
+          if [ -d "$WHEELS_DIR" ] && ls "$WHEELS_DIR"/*.whl >/dev/null 2>&1; then
+            "$PIP" install --no-index --find-links "$WHEELS_DIR" textual >/dev/null
+          else
+            "$PIP" install textual >/dev/null
+          fi
+          exec "$VPY" "${ROOT}/tui/tui_bitchat.py"
           SH
-          chmod +x "release/$OUT/tui/bitchat-tui.sh"
+          chmod +x "release/$OUT/bitchat.sh"
 
-          # Zip files
+          # If .env exists, copy it
+          if [ -f ../.env ]; then
+            cp -a ../.env "release/$OUT/config"
+          fi
+
+          # Package
           cd release
           zip -r "${OUT}.zip" "$OUT"
           ls -lah "${OUT}.zip"
