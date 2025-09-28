@@ -1,7 +1,6 @@
 // include/transport/bluez_dbus_util.hpp
 #pragma once
 #include "transport/bluez_transport.hpp"
-#include "transport/bluez_transport_impl.hpp"
 
 #include <cctype>
 #include <cstdint>
@@ -31,7 +30,8 @@ static inline bool mac_eq(std::string a, std::string b)
     return norm(std::move(a)) == norm(std::move(b));
 }
 
-static inline bool path_mac_eq(const std::string &obj_path, const std::string &mac)
+[[maybe_unused]] static inline bool path_mac_eq(const std::string &obj_path,
+                                                const std::string &mac)
 {
     // DBus path "/org/bluez/hci0/dev_XX_YY_ZZ" vs "XX:YY:ZZ"
     auto pos = obj_path.rfind("/dev_");
@@ -45,7 +45,7 @@ static inline bool path_mac_eq(const std::string &obj_path, const std::string &m
 }
 
 #if BITCHAT_HAVE_SDBUS
-static int read_var_s(sd_bus_message *m, std::string &out)
+[[maybe_unused]] static inline int read_var_s(sd_bus_message *m, std::string &out)
 {
     // read variant "s"
     int r = sd_bus_message_enter_container(m, SD_BUS_TYPE_VARIANT, "s");
@@ -59,7 +59,7 @@ static int read_var_s(sd_bus_message *m, std::string &out)
     return r < 0 ? r : r2;
 }
 
-static int read_var_i16(sd_bus_message *m, int16_t &out)
+[[maybe_unused]] static inline int read_var_i16(sd_bus_message *m, int16_t &out)
 {
     // read variant "n" (int16)
     int r = sd_bus_message_enter_container(m, SD_BUS_TYPE_VARIANT, "n");
@@ -70,7 +70,9 @@ static int read_var_i16(sd_bus_message *m, int16_t &out)
     return r < 0 ? r : r2;
 }
 
-static int var_as_has_uuid(sd_bus_message *m, const std::string &want_uuid, bool &hit)
+[[maybe_unused]] static inline int var_as_has_uuid(sd_bus_message    *m,
+                                                   const std::string &want_uuid,
+                                                   bool              &hit)
 {
     // read variant "as" and check if list contains want_uuid (case-insensitive)
     hit   = false;

@@ -13,8 +13,6 @@
 #include <systemd/sd-bus.h>
 #include <unistd.h>
 
-namespace
-{
 // TU-local wrapper to unref and null a slot ptr
 inline void unref_slot(sd_bus_slot *&s)
 {
@@ -24,8 +22,6 @@ inline void unref_slot(sd_bus_slot *&s)
         s = nullptr;
     }
 }
-}  // namespace
-
 #endif
 
 namespace transport
@@ -61,21 +57,23 @@ class BluezTransport final : public ITransport
     const BluezConfig &config() const { return cfg_; }
 
     // set/get accessors to impl_ members
-    const std::string &tx_path() const;
-    const std::string &rx_path() const;
-    const std::string &svc_path() const;
-    const std::string &app_path() const;
-    const std::string &dev_path() const;
-    const std::string &unique_name() const;
-    bool               tx_notifying() const;
-    void               set_tx_notifying(bool v);
-    void               set_dev_path(const char *path);
-    bool               connected() const;
-    void               set_connected(bool v);
-    bool               subscribed() const;
-    void               set_subscribed(bool v);
-    void               set_connect_inflight(bool v);
-    bool     is_running() const noexcept { return running_.load(std::memory_order_relaxed); }
+    // getters
+    const std::string &tx_path() const noexcept;
+    const std::string &rx_path() const noexcept;
+    const std::string &svc_path() const noexcept;
+    const std::string &app_path() const noexcept;
+    const std::string &dev_path() const noexcept;
+    const std::string &unique_name() const noexcept;
+    bool               tx_notifying() const noexcept;
+    bool               connected() const noexcept;
+    bool               subscribed() const noexcept;
+    bool is_running() const noexcept { return running_.load(std::memory_order_relaxed); }
+    // setters
+    void     set_tx_notifying(bool v);
+    void     set_dev_path(const char *path);
+    void     set_connected(bool v);
+    void     set_subscribed(bool v);
+    void     set_connect_inflight(bool v);
     void     deliver_rx_bytes(const uint8_t *data, size_t len);
     void     set_next_connect_at_ms(uint64_t new_ms);
     bool     services_resolved() const;

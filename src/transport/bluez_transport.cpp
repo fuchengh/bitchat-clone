@@ -57,31 +57,31 @@ BluezTransport::~BluezTransport()
 }
 
 // ============== Impl accessors ==============
-const std::string &BluezTransport::tx_path() const
+const std::string &BluezTransport::tx_path() const noexcept
 {
     return impl_->tx_path;
 }
-const std::string &BluezTransport::rx_path() const
+const std::string &BluezTransport::rx_path() const noexcept
 {
     return impl_->rx_path;
 }
-const std::string &BluezTransport::svc_path() const
+const std::string &BluezTransport::svc_path() const noexcept
 {
     return impl_->svc_path;
 }
-const std::string &BluezTransport::app_path() const
+const std::string &BluezTransport::app_path() const noexcept
 {
     return impl_->app_path;
 }
-const std::string &BluezTransport::dev_path() const
+const std::string &BluezTransport::dev_path() const noexcept
 {
     return impl_->dev_path;
 }
-const std::string &BluezTransport::unique_name() const
+const std::string &BluezTransport::unique_name() const noexcept
 {
     return impl_->unique_name;
 }
-bool BluezTransport::tx_notifying() const
+bool BluezTransport::tx_notifying() const noexcept
 {
     return impl_->notifying.load();
 }

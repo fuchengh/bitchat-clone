@@ -34,7 +34,6 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
     r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sa{sv}}");
     if (r < 0)
         return r;
-
     while ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_DICT_ENTRY, "sa{sv}")) > 0)
     {
         const char *iface = nullptr;

@@ -151,7 +151,7 @@ static bool char_start_notify_locked(sd_bus            *bus,
 namespace transport
 {
 // -------- Central state accessors --------
-bool BluezTransport::connected() const
+bool BluezTransport::connected() const noexcept
 {
     return impl_->connected.load();
 }
@@ -161,7 +161,7 @@ void BluezTransport::set_connected(bool v)
     impl_->connected.store(v);
 }
 
-bool BluezTransport::subscribed() const
+bool BluezTransport::subscribed() const noexcept
 {
     return impl_->subscribed.load();
 }
