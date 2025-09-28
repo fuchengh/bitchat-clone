@@ -1,15 +1,38 @@
-// ===========================================================================================
-// BluezTransport (facade / role-agnostic entry points)
-//
-// ROLE-LEVEL READY SIGNAL:
-//  - Central: ready == (connected && subscribed)
-//  - Peripheral: ready == (Notifying == true) on TX characteristic
-//
-// LIFECYCLE CHECKLIST:
-//  - Peripheral: Stop advertising -> unexport objects/vtables -> clear slots -> stop loop
-//  - Central: Disable notifications -> cancel inflight calls -> StopDiscovery if needed ->
-//             unhook Added/Removed/Props slots -> stop loop
-// ===========================================================================================
+/* ======================================================================
+ * BlueZ Transport (facade) — overall flow
+ *
+ *  App thread                                   Transport (facade)                Central/Peripheral impl
+ *  ----------                                   -------------------               -----------------------
+ *  start(config, on_frame)
+ *    └─ validate config / store callback
+ *    └─ if role == central  ─────────────────────────────────────────────────────▶  start_central()
+ *    └─ if role == peripheral ───────────────────────────────────────────────────▶  start_peripheral()
+ *
+ *  send_central(data, len)
+ *    └─ checks role and link_ready
+ *    └─ to central_write(data, len) ─────────────────────────────────────────────▶  DBus WriteValue (peer_rx)
+ *
+ *  send_peripheral(data, len)
+ *    └─ checks role and link_ready
+ *    └─ to send_peripheral_impl(data, len) ──────────────────────────────────────▶  emit PropertiesChanged
+ *
+ *  link_ready()
+ *    └─ if central: returns connected && subscribed
+ *    └─ if peripheral: returns tx_notifying() == true
+ *
+ *  stop()
+ *    └─ if role == central  ─────────────────────────────────────────────────────▶  stop_central()
+ *    └─ if role == peripheral ───────────────────────────────────────────────────▶  stop_peripheral()
+ *    └─ clears state and threads
+ *
+ *  Threads
+ *    └─ App thread calls facade APIs
+ *    └─ Each role starts one bus loop thread to handle sd-bus I/O
+ *
+ *  Notes
+ *    └─ All DBus calls issued from the app thread are under impl_->bus_mu
+ *    └─ Callbacks from the bus thread deliver RX frames via on_frame
+ * ====================================================================== */
 
 #include <atomic>
 #include <chrono>
