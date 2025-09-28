@@ -163,6 +163,12 @@ void BluezTransport::deliver_rx_bytes(const uint8_t *data, size_t len)
     on_frame_(std::move(f));
 }
 
+// ======================================================================
+// Function: BluezTransport::start
+// - In: config with role, UUIDs, adapter name
+// - Out: returns true when role-specific start is kicked off
+// - Note: validates config then delegates to central or peripheral
+// ======================================================================
 bool BluezTransport::start(const Settings &s, OnFrame cb)
 {
     if (running_.load(std::memory_order_relaxed))
@@ -181,7 +187,7 @@ bool BluezTransport::start(const Settings &s, OnFrame cb)
         if (p && *p == '\0' && v >= 20 && v <= 244)
         {
             settings_.mtu_payload = static_cast<size_t>(v);
-            LOG_INFO("[BLUEZ] mtu_payload overrided, env val = %zu", settings_.mtu_payload);
+            LOG_INFO("[BLUEZ] mtu_payload overridden, env val = %zu", settings_.mtu_payload);
         }
     }
 
@@ -213,6 +219,12 @@ bool BluezTransport::send(const Frame &f)
     return (this->*send_role_)(f);
 }
 
+// ======================================================================
+// Function: BluezTransport::stop
+// - In: can be called anytime
+// - Out: shuts down central or peripheral path as needed
+// - Note: stop for the chosen role
+// ======================================================================
 void BluezTransport::stop()
 {
     // STOP SEQUENCE (facade):
@@ -232,6 +244,12 @@ void BluezTransport::stop()
     impl_.reset();
 }
 
+// ======================================================================
+// Function: BluezTransport::link_ready
+// - In: none
+// - Out: true when transport is usable for the current role
+// - Note: central needs connected and subscribed, peripheral needs Notifying
+// ======================================================================
 bool BluezTransport::link_ready() const
 {
     if (!impl_)

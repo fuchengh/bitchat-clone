@@ -12,6 +12,12 @@
 namespace transport
 {
 
+// ======================================================================
+// Function: bluez_on_iface_added
+// - In: InterfacesAdded signal with subtree of new objects
+// - Out: updates internal state and may advance discovery steps
+// - Note: used to notice new devices or GATT objects appearing
+// ======================================================================
 int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);
@@ -160,6 +166,12 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
     return 0;
 }
 
+// ======================================================================
+// Function: bluez_on_iface_removed
+// - In: InterfacesRemoved signal with paths that disappeared
+// - Out: clears paths or flags that point to removed objects
+// - Note: keeps our cache in sync with BlueZ
+// ======================================================================
 int bluez_on_iface_removed(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
 {
     auto       *self = static_cast<transport::BluezTransport *>(userdata);
@@ -182,6 +194,12 @@ int bluez_on_iface_removed(sd_bus_message *m, void *userdata, sd_bus_error * /*r
     return 0;
 }
 
+// ======================================================================
+// Function: bluez_on_props_changed
+// - In: PropertiesChanged signal on Device1 or GattCharacteristic1
+// - Out: reacts to keys like ServicesResolved and Notifying
+// - Note: may trigger next step once a key flips to the desired state
+// ======================================================================
 int bluez_on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_error*/)
 {
     auto       *self  = static_cast<transport::BluezTransport *>(userdata);
@@ -352,6 +370,12 @@ int bluez_on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*r
     return 0;
 }
 
+// ======================================================================
+// Function: bluez_on_connect_reply
+// - In: async reply of Device1.Connect
+// - Out: sets connection flags based on success or failure
+// - Note: continues with discovery after a successful connect
+// ======================================================================
 int bluez_on_connect_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*ret*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);

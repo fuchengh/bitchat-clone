@@ -31,7 +31,12 @@
 namespace
 {
 
-// Tiny helper used only for early-exit.
+// ======================================================================
+// Function: gatt_paths_ready
+// - In: three object paths
+// - Out: true when all are non empty
+// - Note: small readability helper
+// ======================================================================
 static inline bool gatt_paths_ready(const std::string &svc,
                                     const std::string &tx,
                                     const std::string &rx)
@@ -39,6 +44,12 @@ static inline bool gatt_paths_ready(const std::string &svc,
     return !svc.empty() && !tx.empty() && !rx.empty();
 }
 
+// ======================================================================
+// Function: adapter_start_discovery_locked
+// - In: bus_mu locked, adapter_path valid
+// - Out: true if StartDiscovery succeeds and discovery_on becomes true
+// - Note: safe to call repeatedly, only starts when off
+// ======================================================================
 static bool adapter_start_discovery_locked(sd_bus            *bus,
                                            const std::string &adapter_path,
                                            std::atomic_bool  &discovery_on)
@@ -75,6 +86,12 @@ static bool adapter_start_discovery_locked(sd_bus            *bus,
     return true;
 }
 
+// ======================================================================
+// Function: adapter_stop_discovery_locked
+// - In: bus_mu locked, adapter_path valid
+// - Out: true if StopDiscovery succeeds or already off
+// - Note: clears discovery_on even if StopDiscovery fails
+// ======================================================================
 static bool adapter_stop_discovery_locked(sd_bus            *bus,
                                           const std::string &adapter_path,
                                           std::atomic_bool  &discovery_on)
@@ -105,6 +122,12 @@ static bool adapter_stop_discovery_locked(sd_bus            *bus,
     return true;
 }
 
+// ======================================================================
+// Function: char_start_notify_locked
+// - In: bus must be valid, bus_mu locked, peer_tx_path is the TX characteristic
+// - Out: true if StartNotify returns success on DBus
+// - Note: sets subscribed to true when successful
+// ======================================================================
 static bool char_start_notify_locked(sd_bus            *bus,
                                      const std::string &peer_tx_path,
                                      std::atomic_bool  &subscribed)
@@ -182,6 +205,12 @@ void BluezTransport::set_next_connect_at_ms(uint64_t new_ms)
 }
 
 // -------- central utilities: discovery filter / control / connect / gatt / notify / write / pump --------
+// ======================================================================
+// Function: BluezTransport::central_set_discovery_filter
+// - In: bus valid, sets Adapter1.SetDiscoveryFilter to LE and our service UUID
+// - Out: true on success and marks uuid_filter_ok
+// - Note: reduces scan noise and speeds up find
+// ======================================================================
 bool BluezTransport::central_set_discovery_filter()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -293,6 +322,12 @@ out:
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_connect
+// - In: bus_mu locked, uses adapter_path / dev_path
+// - Out: returns true after Connect is sent, sets connect_inflight
+// - Note: starts the connection to the target device
+// ======================================================================
 bool BluezTransport::central_connect()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -334,6 +369,12 @@ bool BluezTransport::central_connect()
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_start_discovery
+// - In: bus_mu locked, adapter_path valid
+// - Out: returns true if discovery turns on
+// - Note: safe to call repeatedly, only starts when off
+// ======================================================================
 bool BluezTransport::central_start_discovery()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -348,6 +389,12 @@ bool BluezTransport::central_start_discovery()
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_find_gatt_paths
+// - In: bus_mu locked, reads the ObjectManager cache
+// - Out: true when peer_svc_path, peer_tx_path, and peer_rx_path are all set
+// - Note: stops scanning the cache once all three are found
+// ======================================================================
 bool BluezTransport::central_find_gatt_paths()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -544,6 +591,12 @@ done_scan:
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_enable_notify
+// - In: takes bus_mu lock and uses peer_tx_path
+// - Out: true if StartNotify succeeds, sets subscribed to true
+// - Note: stops discovery if it was running
+// ======================================================================
 bool BluezTransport::central_enable_notify()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -562,6 +615,12 @@ bool BluezTransport::central_enable_notify()
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_cold_scan
+// - In: bus_mu locked, calls GetManagedObjects
+// - Out: true if the walk succeeds, may set dev_path from cache
+// - Note: does not start active discovery
+// ======================================================================
 bool BluezTransport::central_cold_scan()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -747,6 +806,11 @@ out:
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_write
+// - In: bus_mu locked. Must be connected and subscribed. peer_rx_path and data/len are all valid
+// - Out: true if WriteValue succeeds on DBus
+// ======================================================================
 bool BluezTransport::central_write(const uint8_t *data, size_t len)
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -869,6 +933,12 @@ call_write:
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_pump
+// - In: bus_mu locked, checks connection discovery and subscription
+// - Out: may start or stop discovery and initiate connect, discover, notify...
+// - Note: stops scanning once subscribed and can restart when needed
+// ======================================================================
 void BluezTransport::central_pump()
 {
 // kick once when we have a device path
@@ -941,6 +1011,12 @@ void BluezTransport::central_pump()
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::central_discover_services
+// - In: bus_mu locked and dev_path is set
+// - Out: returns true after sending Device1.DiscoverServices
+// - Note: asks BlueZ to resolve GATT services. completion is seen via ServicesResolved
+// ======================================================================
 bool BluezTransport::central_discover_services(bool force_all)
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -1014,12 +1090,23 @@ bool BluezTransport::central_write_frame(const Frame &f)
     return ok;
 }
 
+// ======================================================================
+// Function: BluezTransport::send_central_impl
+// - In: data and len valid, central path active
+// - Out: true if the payload is written to peer RX
+// - Note: thin wrapper around central_write
+// ======================================================================
 bool BluezTransport::send_central_impl(const Frame &f)
 {
     return central_write_frame(f);
 }
 
-// start/stop central
+// ======================================================================
+// Function: BluezTransport::start_central
+// - In: prepared config and clean initial state
+// - Out: sets up matches and may begin discovery
+// - Note: spawns the bus loop thread
+// ======================================================================
 bool BluezTransport::start_central()
 {
 #if !BITCHAT_HAVE_SDBUS
@@ -1100,6 +1187,12 @@ bool BluezTransport::start_central()
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::stop_central
+// - In: may be called anytime, will take bus_mu as needed
+// - Out: tears down matches and threads, discovery is turned off
+// - Note: joins the bus loop thread outside of locks
+// ======================================================================
 void BluezTransport::stop_central()
 {
     // clang-format off

@@ -39,6 +39,7 @@ const sd_bus_vtable gatt_rx_vtable[] = {
     SD_BUS_VTABLE_END};
 
 // LEAdvertisement1
+// Note: immutable properties plus Release method
 const sd_bus_vtable adv_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_PROPERTY("Type", "s", adv_prop_Type, 0, SD_BUS_VTABLE_PROPERTY_CONST),
@@ -70,7 +71,12 @@ int on_reg_app_reply(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err
     return 1;
 }
 
-// TX methods
+// ======================================================================
+// Function: tx_StartNotify
+// - In: method call on TX characteristic
+// - Out: turns on notifying and replies success
+// - Note: emits PropertiesChanged for Notifying
+// ======================================================================
 int tx_StartNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);
@@ -80,6 +86,12 @@ int tx_StartNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/
     return sd_bus_reply_method_return(m, "");
 }
 
+// ======================================================================
+// Function: tx_StopNotify
+// - In: method call on TX characteristic
+// - Out: turns off notifying and replies success
+// - Note: emits PropertiesChanged for Notifying
+// ======================================================================
 int tx_StopNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
 {
     auto *self = static_cast<transport::BluezTransport *>(userdata);
@@ -89,7 +101,12 @@ int tx_StopNotify(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
     return sd_bus_reply_method_return(m, "");
 }
 
-// RX method
+// ======================================================================
+// Function: rx_WriteValue
+// - In: method call on RX characteristic with payload and options
+// - Out: delivers bytes to transport and replies success
+// - Note: rejects non-zero offset
+// ======================================================================
 int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
 {
     auto       *self = static_cast<transport::BluezTransport *>(userdata);
@@ -146,7 +163,12 @@ int rx_WriteValue(sd_bus_message *m, void *userdata, sd_bus_error * /*ret_err*/)
     return sd_bus_reply_method_return(m, "");
 }
 
-// Advertising
+// ======================================================================
+// Function: adv_Release
+// - In: method call on advertisement object
+// - Out: replies success
+// - Note: used by BlueZ when unregistering the advertiser
+// ======================================================================
 int adv_Release(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret*/)
 {
     LOG_DEBUG("[BLUEZ][peripheral] adv.Release()");
@@ -168,7 +190,12 @@ int on_reg_adv_reply(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*re
     return 1;
 }
 
-// Service props
+// ======================================================================
+// Function: svc_prop_UUID
+// - In: reply and userdata provided by sd-bus property get
+// - Out: appends service UUID string
+// - Note: part of org.bluez.GattService1
+// ======================================================================
 int svc_prop_UUID(sd_bus * /*bus*/,
                   const char * /*path*/,
                   const char * /*iface*/,
@@ -181,6 +208,12 @@ int svc_prop_UUID(sd_bus * /*bus*/,
     return sd_bus_message_append(reply, "s", self->config().svc_uuid.c_str());
 }
 
+// ======================================================================
+// Function: svc_prop_Primary
+// - In: property get on the service
+// - Out: appends true to indicate primary service
+// - Note: constant result
+// ======================================================================
 int svc_prop_Primary(sd_bus * /*bus*/,
                      const char * /*path*/,
                      const char * /*iface*/,
@@ -192,6 +225,12 @@ int svc_prop_Primary(sd_bus * /*bus*/,
     return sd_bus_message_append(reply, "b", 1);
 }
 
+// ======================================================================
+// Function: svc_prop_Includes
+// - In: property get on the service
+// - Out: appends empty array of object paths
+// - Note: we do not include other services
+// ======================================================================
 int svc_prop_Includes(sd_bus * /*bus*/,
                       const char * /*path*/,
                       const char * /*iface*/,
@@ -206,7 +245,12 @@ int svc_prop_Includes(sd_bus * /*bus*/,
     return sd_bus_message_close_container(reply);
 }
 
-// Char props
+// ======================================================================
+// Function: chr_prop_UUID
+// - In: property get on a characteristic path
+// - Out: appends TX or RX UUID based on the path
+// - Note: shared handler for both characteristics
+// ======================================================================
 int chr_prop_UUID(sd_bus * /*bus*/,
                   const char *path,
                   const char * /*iface*/,
@@ -224,6 +268,12 @@ int chr_prop_UUID(sd_bus * /*bus*/,
     return -EINVAL;
 }
 
+// ======================================================================
+// Function: chr_prop_Service
+// - In: property get on a characteristic
+// - Out: appends the owning service object path
+// - Note: ties char back to the service
+// ======================================================================
 int chr_prop_Service(sd_bus * /*bus*/,
                      const char * /*path*/,
                      const char * /*iface*/,
@@ -236,6 +286,12 @@ int chr_prop_Service(sd_bus * /*bus*/,
     return sd_bus_message_append(reply, "o", self->svc_path().c_str());
 }
 
+// ======================================================================
+// Function: chr_prop_Flags
+// - In: property get on a characteristic path
+// - Out: appends allowed flags for TX or RX
+// - Note: TX is notify, RX is write and write-without-response
+// ======================================================================
 int chr_prop_Flags(sd_bus * /*bus*/,
                    const char *path,
                    const char * /*iface*/,
@@ -276,6 +332,12 @@ int chr_prop_Flags(sd_bus * /*bus*/,
     return -EINVAL;
 }
 
+// ======================================================================
+// Function: chr_prop_Notifying
+// - In: property get on TX characteristic
+// - Out: appends current Notifying state
+// - Note: only meaningful for TX
+// ======================================================================
 int chr_prop_Notifying(sd_bus * /*bus*/,
                        const char *path,
                        const char * /*iface*/,
@@ -289,6 +351,12 @@ int chr_prop_Notifying(sd_bus * /*bus*/,
     return sd_bus_message_append(reply, "b", b);
 }
 
+// ======================================================================
+// Function: adv_prop_Type
+// - In: property get on advertisement
+// - Out: appends string peripheral
+// - Note: advertisement type
+// ======================================================================
 int adv_prop_Type(sd_bus * /*bus*/,
                   const char * /*path*/,
                   const char * /*iface*/,
@@ -300,6 +368,12 @@ int adv_prop_Type(sd_bus * /*bus*/,
     return sd_bus_message_append(reply, "s", "peripheral");
 }
 
+// ======================================================================
+// Function: adv_prop_ServiceUUIDs
+// - In: property get on advertisement
+// - Out: appends one service UUID in an array
+// - Note: advertises our primary service
+// ======================================================================
 int adv_prop_ServiceUUIDs(sd_bus * /*bus*/,
                           const char * /*path*/,
                           const char * /*iface*/,
@@ -318,6 +392,12 @@ int adv_prop_ServiceUUIDs(sd_bus * /*bus*/,
     return sd_bus_message_close_container(reply);
 }
 
+// ======================================================================
+// Function: adv_prop_LocalName
+// - In: property get on advertisement
+// - Out: appends the local name
+// - Note: comes from config
+// ======================================================================
 int adv_prop_LocalName(sd_bus * /*bus*/,
                        const char * /*path*/,
                        const char * /*iface*/,
@@ -329,6 +409,12 @@ int adv_prop_LocalName(sd_bus * /*bus*/,
     return sd_bus_message_append(reply, "s", "BitChat");
 }
 
+// ======================================================================
+// Function: adv_prop_IncludeTxPower
+// - In: property get on advertisement
+// - Out: appends true to include Tx power
+// - Note: constant choice
+// ======================================================================
 int adv_prop_IncludeTxPower(sd_bus * /*bus*/,
                             const char * /*path*/,
                             const char * /*iface*/,

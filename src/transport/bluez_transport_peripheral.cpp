@@ -1,9 +1,6 @@
 // =============================================================================
 // PERIPHERAL ROLE IMPLEMENTATION
 // GATT/ADV object export / StartNotify/StopNotify / WriteValue / notify fast-path
-//
-// READY SIGNAL:
-//  - link_ready() uses Impl::notifying, toggled by StartNotify/StopNotify cbs
 // ============================================================================
 
 #include <cstring>
@@ -23,6 +20,13 @@
 
 namespace
 {
+
+// ======================================================================
+// Function: emit_value_props_changed_ay
+// - In: bus and tx_path valid, data and len are the payload
+// - Out: sends PropertiesChanged with Value=ay on the TX characteristic
+// - Note: fast path for peripheral notify without touching Notifying
+// ======================================================================
 static bool emit_value_props_changed_ay(sd_bus            *bus,
                                         const std::string &tx_path,
                                         const uint8_t     *data,
@@ -77,6 +81,12 @@ fail_new:
 namespace transport
 {
 
+// ======================================================================
+// Function: BluezTransport::emit_tx_props_changed
+// - In: bus valid and tx_path set, prop is a GATT property name like Notifying
+// - Out: emits PropertiesChanged on the TX characteristic
+// - Note: used when StartNotify or StopNotify flips Notifying
+// ======================================================================
 void BluezTransport::emit_tx_props_changed(const char *prop)
 {
 #if BITCHAT_HAVE_SDBUS
@@ -89,9 +99,20 @@ void BluezTransport::emit_tx_props_changed(const char *prop)
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::start_peripheral
+// - In: prepared config and clean initial state
+// - Out: exports service and characteristics and starts advertising
+// - Note: spawns the bus loop thread
+// ======================================================================
 bool BluezTransport::start_peripheral()
 {
-    // Export order: ObjectManager (app) -> GattService1 -> TX/RX -> LEAdvertisement1 -> RegisterAdvertisement
+    // ======================================================================
+    // Export order
+    // - ObjectManager (app) -> GattService1 -> TX/RX -> LEAdvertisement1
+    // - Finally register advertisement
+    // - Vtable definitions are in bluez_helper_peripheral.cpp
+    // ======================================================================
 
 #if !BITCHAT_HAVE_SDBUS
     LOG_ERROR("[BLUEZ][peripheral] sd-bus not available (BITCHAT_HAVE_SDBUS=0)");
@@ -200,6 +221,12 @@ bool BluezTransport::start_peripheral()
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::stop_peripheral
+// - In: may be called anytime, will take bus_mu as needed
+// - Out: unexports objects and clears all slots, stops advertisement
+// - Note: joins the bus loop thread outside of locks
+// ======================================================================
 void BluezTransport::stop_peripheral()
 {
     // clang-format off
@@ -268,6 +295,12 @@ bool BluezTransport::peripheral_can_notify()
 #endif
 }
 
+// ======================================================================
+// Function: BluezTransport::send_peripheral_impl
+// - In: tx notifications are on, data/len are valid
+// - Out: true if a Value update is emitted on the TX characteristic
+// - Note: used to notify the central
+// ======================================================================
 bool BluezTransport::send_peripheral_impl(const Frame &f)
 {
 #if !BITCHAT_HAVE_SDBUS
