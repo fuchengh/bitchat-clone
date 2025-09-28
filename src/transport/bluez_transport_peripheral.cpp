@@ -68,40 +68,53 @@ static const sd_bus_vtable adv_vtable[] = {
 #if BITCHAT_HAVE_SDBUS
 namespace
 {
-static int emit_props_changed_value(sd_bus        *bus,
-                                    const char    *path,
-                                    const uint8_t *bytes,
-                                    size_t         len)
+static bool emit_value_props_changed_ay(sd_bus            *bus,
+                                        const std::string &tx_path,
+                                        const uint8_t     *data,
+                                        size_t             len)
 {
-    if (!bus || !path)
-        return -EINVAL;
+    if (!bus || !data || len == 0)
+        return false;
     sd_bus_message *sig = nullptr;
-    int r = sd_bus_message_new_signal(bus, &sig, path, "org.freedesktop.DBus.Properties",
-                                      "PropertiesChanged");
+    int             r   = sd_bus_message_new_signal(bus, &sig, tx_path.c_str(),
+                                                    "org.freedesktop.DBus.Properties", "PropertiesChanged");
     // clang-format off
+    if (r < 0) goto fail_new;
+    // interface
+    r = sd_bus_message_append(sig, "s", "org.bluez.GattCharacteristic1");
     if (r < 0) goto fail;
-    // interface name
-    r = sd_bus_message_append(sig, "s", "org.bluez.GattCharacteristic1"); if (r < 0) goto fail;
     // a{sv}
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "{sv}");    if (r < 0) goto fail;
-    // dict entry: "Value" -> variant "ay"
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_DICT_ENTRY, "sv"); if (r < 0) goto fail;
-    r = sd_bus_message_append(sig, "s", "Value");                         if (r < 0) goto fail;
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_VARIANT, "ay");    if (r < 0) goto fail;
-    r = sd_bus_message_append_array(sig, 'y', bytes, len);                if (r < 0) goto fail;
-    r = sd_bus_message_close_container(sig); /* variant */                if (r < 0) goto fail;
-    r = sd_bus_message_close_container(sig); /* dict entry */             if (r < 0) goto fail;
-    r = sd_bus_message_close_container(sig); /* a{sv} */                  if (r < 0) goto fail;
-    // invalidated properties: empty 'as'
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "s");       if (r < 0) goto fail;
-    r = sd_bus_message_close_container(sig);                              if (r < 0) goto fail;
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "{sv}");
+    if (r < 0) goto fail;
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_DICT_ENTRY, "sv");
+    if (r < 0) goto fail;
+    r = sd_bus_message_append(sig, "s", "Value");
+    if (r < 0) goto fail;
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_VARIANT, "ay");
+    if (r < 0) goto fail;
+    r = sd_bus_message_append_array(sig, 'y', data, len);
+    if (r < 0) goto fail;
+    r = sd_bus_message_close_container(sig); /* variant */
+    if (r < 0) goto fail;
+    r = sd_bus_message_close_container(sig); /* dict entry */
+    if (r < 0) goto fail;
+    r = sd_bus_message_close_container(sig); /* a{sv} */
+    if (r < 0) goto fail;
+    // invalidated props: empty 'as'
+    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "s");
+    if (r < 0) goto fail;
+    r = sd_bus_message_close_container(sig);
+    if (r < 0) goto fail;
     // send
     r = sd_bus_send(bus, sig, nullptr);
-  fail:
-    // clang-format on
+    sd_bus_message_unref(sig);
+    return (r >= 0);
+    // clang-format off
+fail:
     if (sig)
         sd_bus_message_unref(sig);
-    return r;
+fail_new:
+    return false;
 }
 }  // namespace
 #endif
@@ -110,77 +123,27 @@ namespace transport
 {
 
 // ===== Bus-thread fast path notify =====
-#if BITCHAT_HAVE_SDBUS
 bool BluezTransport::peripheral_notify_ay_from_bus_thread(const uint8_t *data, size_t len)
 {
+#if !BITCHAT_HAVE_SDBUS
+    (void)data;
+    (void)len;
+    return false;
+#else
     // Called from sd-bus callback thread; DO NOT take bus_mu here.
-    if (!impl_ || !impl_->bus || !data || len == 0)
+    // Sends PropertiesChanged("Value"=ay) on TX characteristic.
+    if (!impl_ || !impl_->bus)
         return false;
     if (!tx_notifying())
         return false;  // central hasn't StartNotify yet
-
-    sd_bus_message *sig = nullptr;
-    int             r   = sd_bus_message_new_signal(impl_->bus, &sig, impl_->tx_path.c_str(),
-                                                    "org.freedesktop.DBus.Properties", "PropertiesChanged");
-    if (r < 0)
-    {
-        LOG_WARN("[BLUEZ][peripheral] notify(new_signal) failed: %s", strerror(-r));
-        return false;
-    }
-    // interface
-    r = sd_bus_message_append(sig, "s", "org.bluez.GattCharacteristic1");
-    if (r < 0)
-        goto fail;
-    // a{sv}
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "{sv}");
-    if (r < 0)
-        goto fail;
-    // dict entry: "Value" -> variant "ay"
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_DICT_ENTRY, "sv");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_append(sig, "s", "Value");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_VARIANT, "ay");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_append_array(sig, 'y', data, len);
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);  // variant
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);  // dict entry
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);  // a{sv}
-    if (r < 0)
-        goto fail;
-    // invalidated props: empty 'as'
-    r = sd_bus_message_open_container(sig, SD_BUS_TYPE_ARRAY, "s");
-    if (r < 0)
-        goto fail;
-    r = sd_bus_message_close_container(sig);
-    if (r < 0)
-        goto fail;
-
-    r = sd_bus_send(impl_->bus, sig, nullptr);
-    sd_bus_message_unref(sig);
-    if (r < 0)
-    {
-        LOG_WARN("[BLUEZ][peripheral] notify(send) failed: %s", strerror(-r));
-        return false;
-    }
-    LOG_DEBUG("[BLUEZ][peripheral] notify(len=%zu) sent (bus-thread)", len);
-    return true;
-fail:
-    if (sig)
-        sd_bus_message_unref(sig);
-    LOG_WARN("[BLUEZ][peripheral] notify(build) failed");
-    return false;
-}
+    bool ok = emit_value_props_changed_ay(impl_->bus, impl_->tx_path, data, len);
+    if (!ok)
+        LOG_WARN("[BLUEZ][peripheral] notify(send) failed");
+    else
+        LOG_DEBUG("[BLUEZ][peripheral] notify(len=%zu) sent (bus-thread)", len);
+    return ok;
 #endif
+}
 
 void BluezTransport::emit_tx_props_changed(const char *prop)
 {
@@ -369,39 +332,25 @@ bool BluezTransport::peripheral_can_notify()
 #endif
 }
 
-bool BluezTransport::peripheral_send_locked(const Frame &f)
-{
-#if BITCHAT_HAVE_SDBUS
-    std::lock_guard<std::mutex> lk(bus_mu());
-    const int r = emit_props_changed_value(bus(), tx_path().c_str(), f.data(), f.size());
-    if (r < 0)
-    {
-        LOG_WARN("[BLUEZ][peripheral] notify send failed: %s", strerror(-r));
-        return false;
-    }
-    LOG_DEBUG("[BLUEZ][peripheral] notify len=%zu sent", (size_t)f.size());
-    return true;
-#else
-    (void)f;
-    return false;
-#endif
-}
-
-bool BluezTransport::peripheral_notify_value(const Frame &f)
-{
-#if BITCHAT_HAVE_SDBUS
-    if (!peripheral_can_notify())
-        return false;
-    return peripheral_send_locked(f);
-#else
-    (void)f;
-    return false;
-#endif
-}
-
 bool BluezTransport::send_peripheral_impl(const Frame &f)
 {
-    return peripheral_notify_value(f);
+#if !BITCHAT_HAVE_SDBUS
+    (void)f;
+    return false;
+#else
+    // Locked path: we may be called outside the bus thread; use bus_mu for sd-bus calls.
+    if (!peripheral_can_notify())
+        return false;
+    const uint8_t *data = f.data();
+    const size_t   len  = f.size();
+    if (!data || len == 0)
+        return false;
+    std::lock_guard<std::mutex> lk(impl_->bus_mu);
+    bool ok = emit_value_props_changed_ay(impl_->bus, impl_->tx_path, data, len);
+    if (!ok)
+        LOG_WARN("[BLUEZ][peripheral] notify(send, locked) failed");
+    return ok;
+#endif
 }
 
 }  // namespace transport
