@@ -6,6 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# ---- Testing knobs ----
+# Define BUILD_TESTING, default OFF when cross-compiling
+include(CTest)  # defines BUILD_TESTING (default: ON for top-level projects)
+if (CMAKE_CROSSCOMPILING)
+  set(BUILD_TESTING OFF CACHE BOOL "Disable tests when cross-compiling" FORCE)
+endif()
+# Let gtest discover tests at ctest time, not build time
+set(GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST CACHE STRING "" FORCE)
+
 add_library(bitchat_warnings INTERFACE)
 target_compile_options(bitchat_warnings INTERFACE
   $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive->
@@ -156,48 +165,51 @@ target_link_libraries(bitchatd PRIVATE bitchat_transport bitchat_app bitchat_ctl
 add_executable(bitchatctl src/cli/main.cpp)
 target_link_libraries(bitchatctl PRIVATE bitchat_ctl bitchat_warnings)
 
-# --- Tests
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip
-)
-# For GTest on older CMake policies
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(googletest)
+# --- Tests (only when enabled AND not cross-compiling)
+if (BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+  include(FetchContent)
+  FetchContent_Declare(
+    googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip
+  )
+  # For GTest on older CMake policies
+  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
 
-enable_testing()
+  enable_testing()
 
-# --- Unit tests
-add_executable(unit_tests
-  tests/test_env.cpp
-  tests/test_tui_log.cpp
-  tests/test_ipc.cpp
-  tests/test_cli.cpp
-  tests/test_loopback.cpp
-  tests/test_frag.cpp
-  tests/test_aead.cpp
-  tests/test_chat.cpp
-  tests/test_aead_session.cpp
-)
-target_include_directories(unit_tests PRIVATE include)
-target_compile_definitions(unit_tests PRIVATE BITCHAT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-target_link_libraries(unit_tests
-  PRIVATE
-    gtest_main
-    bitchat_app
-    bitchat_ctl
-    bitchat_transport
-    bitchat_warnings
-    bitchat_proto
-    bitchat_crypto
-)
+  # --- Unit tests
+  add_executable(unit_tests
+    tests/test_env.cpp
+    tests/test_tui_log.cpp
+    tests/test_ipc.cpp
+    tests/test_cli.cpp
+    tests/test_loopback.cpp
+    tests/test_frag.cpp
+    tests/test_aead.cpp
+    tests/test_chat.cpp
+    tests/test_aead_session.cpp
+  )
+  target_include_directories(unit_tests PRIVATE include)
+  target_compile_definitions(unit_tests PRIVATE BITCHAT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  target_link_libraries(unit_tests
+    PRIVATE
+      gtest_main
+      bitchat_app
+      bitchat_ctl
+      bitchat_transport
+      bitchat_warnings
+      bitchat_proto
+      bitchat_crypto
+  )
 
-include(GoogleTest)
-gtest_discover_tests(unit_tests)
-# Workaround for Ninja + CMake < 3.20: pre-create object dir for depfiles
-if (CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_VERSION VERSION_LESS "3.20")
-  file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/CMakeFiles/unit_tests.dir/tests")
+  include(GoogleTest)
+  gtest_discover_tests(unit_tests)  # discovery moved to PRE_TEST by the cache var above
+
+  # Workaround for Ninja + CMake < 3.20: pre-create object dir for depfiles
+  if (CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_VERSION VERSION_LESS "3.20")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/CMakeFiles/unit_tests.dir/tests")
+  endif()
 endif()
 
 set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)

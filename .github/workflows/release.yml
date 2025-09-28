@@ -1,7 +1,7 @@
 name: release
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
@@ -120,6 +120,7 @@ jobs:
             -DBITCHAT_WERROR=ON \
             -DBITCHAT_WITH_BLUEZ=ON \
             -DBUILD_TESTING=OFF \
+            -DGTEST_DISCOVER_TESTS_DISCOVERY_MODE=PRE_TEST \
             $( if [ "${{ matrix.target }}" = "aarch64" ]; then
                 echo "-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
                       -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
@@ -141,7 +142,15 @@ jobs:
 
           cp -a ./bin/bitchatd ./bin/bitchatctl "release/$OUT/bin/"
 
-          cp -a ../tui_bitchat.py "release/$OUT/tui/" || cp -a tui_bitchat.py "release/$OUT/tui/"
+          if [ -f ../tui_bitchat.py ]; then
+            cp -a ../tui_bitchat.py "release/$OUT/tui/"
+          elif [ -f tui_bitchat.py ]; then
+            cp -a tui_bitchat.py "release/$OUT/tui/"
+          else
+            echo "FATAL: tui_bitchat.py not found" >&2
+          exit 1
+          fi
+
           cat > "release/$OUT/tui/bitchat-tui.sh" <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -150,7 +159,7 @@ jobs:
           if ! python3 -c "import textual" >/dev/null 2>&1; then
             python3 -m pip install --user textual
           fi
-          exec python3 "${ROOT}/tui_bitchat.py"
+          exec python3 "${ROOT}/tui/tui_bitchat.py"
           SH
           chmod +x "release/$OUT/tui/bitchat-tui.sh"
 
