@@ -94,9 +94,7 @@ class BluezTransport final : public ITransport
 
     bool link_ready() const override;
 
-#if BITCHAT_HAVE_SDBUS
     void emit_tx_props_changed(const char *prop);
-#endif
 
   private:
     BluezConfig      cfg_;

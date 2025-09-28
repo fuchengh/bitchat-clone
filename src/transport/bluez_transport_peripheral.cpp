@@ -124,10 +124,14 @@ namespace transport
 
 void BluezTransport::emit_tx_props_changed(const char *prop)
 {
+#if BITCHAT_HAVE_SDBUS
     if (!impl_ || !impl_->bus)
         return;
     sd_bus_emit_properties_changed(impl_->bus, impl_->tx_path.c_str(),
                                    "org.bluez.GattCharacteristic1", prop, nullptr);
+#else
+    (void)prop;
+#endif
 }
 
 bool BluezTransport::start_peripheral()
