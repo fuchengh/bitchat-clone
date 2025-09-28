@@ -102,7 +102,12 @@ set(TRANSPORT_SRCS src/transport/loopback_transport.cpp)
 
 # On Linux, always build the BlueZ transport stub. It has no external headers yet.
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  list(APPEND TRANSPORT_SRCS src/transport/bluez_transport.cpp)
+  list(APPEND TRANSPORT_SRCS 
+    src/transport/bluez_transport.cpp
+    src/transport/bluez_transport_central.cpp
+    src/transport/bluez_transport_peripheral.cpp
+    src/transport/bluez_helper_peripheral.cpp
+    src/transport/bluez_helper_central.cpp)
   # If BlueZ dev package exists, link it
   if (PkgConfig_FOUND)
     pkg_check_modules(BLUEZ QUIET bluez)
@@ -165,6 +170,8 @@ enable_testing()
 
 # --- Unit tests
 add_executable(unit_tests
+  tests/test_env.cpp
+  tests/test_tui_log.cpp
   tests/test_ipc.cpp
   tests/test_cli.cpp
   tests/test_loopback.cpp
@@ -174,6 +181,7 @@ add_executable(unit_tests
   tests/test_aead_session.cpp
 )
 target_include_directories(unit_tests PRIVATE include)
+target_compile_definitions(unit_tests PRIVATE BITCHAT_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(unit_tests
   PRIVATE
     gtest_main

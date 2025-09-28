@@ -61,3 +61,5 @@ daemon.log
 # Python
 .venv
 
+# Debug/clangd generated
+.cache

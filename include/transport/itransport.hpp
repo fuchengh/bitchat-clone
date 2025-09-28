@@ -25,7 +25,7 @@ struct ITransport
     virtual void        stop()                                  = 0;
     virtual std::string name() const { return ""; }
     virtual bool        link_ready() const = 0;
-    virtual ~ITransport() = default;
+    virtual ~ITransport()                  = default;
 };
 
 }  // namespace transport

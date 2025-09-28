@@ -54,8 +54,8 @@ std::vector<Chunk>        make_chunks(std::uint32_t                    msg_id,
 std::vector<std::uint8_t> serialize(const Chunk &c);
 bool                      pack_header(const Header &in, uint8_t out[12]);
 // RX
-std::optional<Chunk>      parse(const std::vector<std::uint8_t> &frame);
-bool                      unpack_header(const uint8_t in[12], Header &out);
+std::optional<Chunk> parse(const std::vector<std::uint8_t> &frame);
+bool                 unpack_header(const uint8_t in[12], Header &out);
 
 class Reassembler
 {

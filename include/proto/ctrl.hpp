@@ -12,7 +12,7 @@ constexpr uint8_t T_USER_ID      = 0x01;
 constexpr uint8_t T_CAPS         = 0x02;
 constexpr uint8_t T_NA32         = 0x12;
 
-constexpr uint32_t CAP_AEAD_PSK_SUPPORTED = 1u << 0;
+constexpr uint32_t    CAP_AEAD_PSK_SUPPORTED = 1u << 0;
 constexpr std::size_t USER_ID_MAX            = 64;
 
 struct Hello
@@ -43,7 +43,7 @@ inline std::vector<uint8_t> encode_hello(std::string_view user, uint32_t caps, c
     out.push_back(0x00);
     out.push_back(0x04);
     // explicit little-endian
-    out.push_back(static_cast<uint8_t>((caps)&0xFF));
+    out.push_back(static_cast<uint8_t>((caps) & 0xFF));
     out.push_back(static_cast<uint8_t>((caps >> 8) & 0xFF));
     out.push_back(static_cast<uint8_t>((caps >> 16) & 0xFF));
     out.push_back(static_cast<uint8_t>((caps >> 24) & 0xFF));
@@ -92,7 +92,7 @@ inline bool parse_hello(const uint8_t *buf, size_t len, Hello &h)
                 h.has_na32 = true;
                 std::copy(v, v + 32, h.na32.begin());
                 break;
-            default: // ignore TLV if unknown
+            default:  // ignore TLV if unknown
                 break;
         }
         i += L;

@@ -43,7 +43,7 @@ static int run_cli(const std::string &sock, const std::string &args)
         return -1;
     return WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
 }
-}  // namespace
+}  // namespace test_cli
 
 TEST(CLI, TestCliFunctionalality)
 {
