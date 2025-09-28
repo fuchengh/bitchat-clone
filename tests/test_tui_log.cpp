@@ -66,10 +66,10 @@ TEST(TuiLogs, AllSystemLevel)
         {"KEX invalid PSK", "src/app/chat_service.cpp", {"[KEX]", "no/invalid PSK"}},
         // Enforce SYSTEM (used to be WARN)
         {"SEC AEAD decrypt failed", "src/app/chat_service.cpp", {"[SEC]", "AEAD decrypt failed"}},
-
-        {"Notifications ready", "src/transport/bluez_transport.cpp", {"Notifications enabled; ready"}},
-        {"StartDiscovery OK", "src/transport/bluez_transport.cpp", {"StartDiscovery OK"}},
-        {"StopDiscovery OK", "src/transport/bluez_transport.cpp", {"StopDiscovery OK"}},
+        // role = central
+        {"Notifications ready", "src/transport/bluez_transport_central.cpp", {"Notifications enabled; ready"}},
+        {"StartDiscovery OK", "src/transport/bluez_transport_central.cpp", {"StartDiscovery OK"}},
+        {"StopDiscovery OK", "src/transport/bluez_transport_central.cpp", {"StopDiscovery OK"}},
 
         {"Device connected", "src/transport/bluez_helper.inc", {"Device connected:"}},
         {"Connected property true", "src/transport/bluez_helper.inc", {"Connected property became true"}},
