@@ -129,7 +129,8 @@ jobs:
               fi )
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build -j --target bitchatd bitchatctl
+
 
       - name: Package (zip with tui + 2 bins)
         run: |
