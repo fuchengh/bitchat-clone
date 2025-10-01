@@ -64,6 +64,7 @@ class BluezTransport final : public ITransport
     const std::string &app_path() const noexcept;
     const std::string &dev_path() const noexcept;
     const std::string &unique_name() const noexcept;
+    const std::string &adapter_path() const noexcept;
     bool               tx_notifying() const noexcept;
     bool               connected() const noexcept;
     bool               subscribed() const noexcept;

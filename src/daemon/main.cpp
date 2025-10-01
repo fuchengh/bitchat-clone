@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstring>
 #include <memory>
 #include <string>
 
@@ -68,6 +69,17 @@ static void on_line(const std::string &line)
             LOG_WARN("ChatService not ready");
         return;
     }
+    if (line == "PEERS")
+    {
+        LOG_SYSTEM("[PEERS] not implemented (handover roadmap)");
+        return;
+    }
+    if (line.rfind("HANDOVER", 0) == 0)
+    {
+        // Expected syntax later: "HANDOVER AA:BB:CC:DD:EE:FF"
+        LOG_SYSTEM("[HANDOVER] not implemented (handover roadmap)");
+        return;
+    }
 }
 
 int main()
@@ -78,6 +90,14 @@ int main()
     {
         bitchat::set_log_level_by_name(log_level);
     }
+
+    const char *env_transport = std::getenv("BITCHAT_TRANSPORT");
+    const char *env_role      = std::getenv("BITCHAT_ROLE");
+    const char *env_adapter   = std::getenv("BITCHAT_ADAPTER");
+    const char *env_peer      = std::getenv("BITCHAT_PEER");
+    LOG_SYSTEM("Config: transport=%s role=%s adapter=%s peer=%s",
+               env_transport ? env_transport : "loopback", env_role ? env_role : "peripheral",
+               env_adapter ? env_adapter : "hci0", env_peer ? env_peer : "(none)");
 
     // Bind transport from env var
     auto tx = make_transport_from_env();

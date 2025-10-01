@@ -104,6 +104,10 @@ const std::string &BluezTransport::unique_name() const noexcept
 {
     return impl_->unique_name;
 }
+const std::string &BluezTransport::adapter_path() const noexcept
+{
+    return impl_->adapter_path;
+}
 bool BluezTransport::tx_notifying() const noexcept
 {
     return impl_->notifying.load();
