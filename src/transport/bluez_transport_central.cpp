@@ -1001,7 +1001,8 @@ void BluezTransport::central_pump()
         }
         else
         {
-            LOG_DEBUG("[BLUEZ][central] Connected, GATT not exported yet. Waiting...");
+            // too many noises
+            // LOG_DEBUG("[BLUEZ][central] Connected, GATT not exported yet. Waiting...");
         }
     }
 
