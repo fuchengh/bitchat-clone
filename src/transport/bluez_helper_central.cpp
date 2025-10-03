@@ -1,10 +1,10 @@
 // include/transport/bluez_helper_central.hpp
-#include "transport/bluez_transport.hpp"
-#include "transport/bluez_helper_central.hpp"
 #include "transport/bluez_dbus_util.hpp"
+#include "transport/bluez_helper_central.hpp"
+#include "transport/bluez_transport.hpp"
 
-#include <string>
 #include <cstring>
+#include <string>
 
 #if BITCHAT_HAVE_SDBUS
 #include <systemd/sd-bus.h>
@@ -37,6 +37,7 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
     int16_t     rssi      = 0;
     bool        have_rssi = false;
 
+    // payload: a{sa{sv}}
     r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sa{sv}}");
     if (r < 0)
         return r;
@@ -80,21 +81,8 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
                     if ((r = sd_bus_message_skip(m, "v")) < 0)
                         return r;
                 }
-
                 if ((r = sd_bus_message_exit_container(m)) < 0)
                     return r;
-
-                if (svc_hit &&
-                    (!self->config().peer_addr || mac_eq(addr, *self->config().peer_addr)))
-                {
-                    while (sd_bus_message_at_end(m, 0) == 0)
-                    {
-                        int rr = sd_bus_message_skip(m, "{sv}");
-                        if (rr < 0)
-                            return rr;
-                    }
-                    break;
-                }
             }
             if ((r = sd_bus_message_exit_container(m)) < 0)
                 return r;
@@ -104,9 +92,6 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
             if ((r = sd_bus_message_skip(m, "a{sv}")) < 0)
                 return r;
         }
-
-        if ((r = sd_bus_message_exit_container(m)) < 0)
-            return r;
         if ((r = sd_bus_message_exit_container(m)) < 0)
             return r;
     }
@@ -115,9 +100,6 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
         return r;
     if ((r = sd_bus_message_exit_container(m)) < 0)
         return r;
-
-    if (!svc_hit && self->has_uuid_discovery_filter())
-        svc_hit = true;
 
     bool has_peer = (self->config().peer_addr && !self->config().peer_addr->empty());
     bool peer_ok  = (has_peer && !addr.empty() && mac_eq(addr, *self->config().peer_addr));
@@ -131,17 +113,10 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
     //           has_peer ? self->config().peer_addr->c_str() : "-", (int)peer_ok, (int)strict_peer);
     if (has_peer)
     {
-        if (peer_ok)
-        {
-            // OK
-        }
-        else if (svc_hit)  // && !strict_peer)
-        {
-            LOG_DEBUG("[BLUEZ][central] peer MAC mismatch but service UUID hit (likely RPA) -> "
-                      "accept");
-        }
-        else
-            return 0;
+        if (!peer_ok && !svc_hit)
+            return 0;  // reject non-target without our service
+        if (!peer_ok && svc_hit)
+            LOG_DEBUG("[BLUEZ][central] peer MAC mismatch but service UUID hit -> accept");
     }
     else
     {
@@ -149,9 +124,28 @@ int bluez_on_iface_added(sd_bus_message *m, void *userdata, sd_bus_error * /*ret
             return 0;
     }
 
+    // Update/record candidate (rssi=0 is not the app we want, ignore)
+    if (!addr.empty() && have_rssi)
+        self->note_candidate(addr, have_rssi ? rssi : 0);
+
+    if (!has_peer)
+        return 0;
+
+    // Adopt as current device if none selected yet.
     if (self->dev_path().empty())
     {
+        bool ok = false;
+        if (!addr.empty() && mac_eq(addr, *self->config().peer_addr))
+            ok = true;
+        else if (path_mac_eq(obj, *self->config().peer_addr))
+            ok = true;
+
+        if (!ok)
+            return 0;
+
         self->set_dev_path(obj);
+        if (!addr.empty())
+            self->note_candidate(addr, have_rssi ? rssi : 0);
         if (have_rssi)
         {
             LOG_SYSTEM("[BLUEZ][central] found %s addr=%s rssi=%d (svc hit)", obj,
@@ -316,15 +310,10 @@ int bluez_on_props_changed(sd_bus_message *m, void *userdata, sd_bus_error * /*r
     if (path && self->dev_path().empty() && uuids_hit && uuids_has_service)
     {
         bool has_peer = (self->config().peer_addr && !self->config().peer_addr->empty());
-        if (!has_peer)
+        if (has_peer && path_mac_eq(path, *self->config().peer_addr))
         {
-            const std::string dev_prefix = std::string("/org/bluez/") + self->config().adapter +
-                                           "/dev_";
-            if (std::string(path).rfind(dev_prefix, 0) == 0)
-            {
-                self->set_dev_path(path);
-                LOG_DEBUG("[BLUEZ][central] PropertiesChanged(UUIDs) picked device: %s", path);
-            }
+            self->set_dev_path(path);
+            LOG_DEBUG("[BLUEZ][central] PropertiesChanged(UUIDs) picked device: %s", path);
         }
     }
 

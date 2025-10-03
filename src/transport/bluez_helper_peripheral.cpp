@@ -175,7 +175,7 @@ int adv_Release(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret*/)
     return sd_bus_reply_method_return(m, "");
 }
 
-int on_reg_adv_reply(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*ret*/)
+int on_reg_adv_reply(sd_bus_message *m, void * userdata, sd_bus_error * /*ret*/)
 {
     if (sd_bus_message_is_method_error(m, nullptr))
     {
@@ -185,7 +185,9 @@ int on_reg_adv_reply(sd_bus_message *m, void * /*userdata*/, sd_bus_error * /*re
     }
     else
     {
-        LOG_SYSTEM("[BLUEZ][peripheral] LE advertisement registered successfully");
+        auto self = static_cast<transport::BluezTransport *>(userdata);
+        LOG_SYSTEM("[BLUEZ][peripheral] LE advertisement registered successfully on %s",
+                   self->adapter_path().c_str());
     }
     return 1;
 }
