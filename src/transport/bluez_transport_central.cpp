@@ -640,6 +640,7 @@ bool BluezTransport::central_enable_notify()
 bool BluezTransport::central_cold_scan(bool refresh_only)
 {
 #if !BITCHAT_HAVE_SDBUS
+    (void)refresh_only;
     return false;
 #else
     sd_bus_message *reply = nullptr;
