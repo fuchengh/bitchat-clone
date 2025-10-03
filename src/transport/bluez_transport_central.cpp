@@ -320,10 +320,19 @@ out:
         sd_bus_message_unref(msg);
     if (rep)
         sd_bus_message_unref(rep);
+
     if (r < 0)
     {
-        LOG_WARN("[BLUEZ][central] SetDiscoveryFilter failed: %s",
-                 err.message ? err.message : strerror(-r));
+        if (-r == EBADMSG)
+        {
+            LOG_INFO("[BLUEZ][central] SetDiscoveryFilter transient EBADMSG; keeping previous "
+                     "filter");
+        }
+        else
+        {
+            LOG_WARN("[BLUEZ][central] SetDiscoveryFilter failed: %s",
+                     err.message ? err.message : strerror(-r));
+        }
         sd_bus_error_free(&err);
         set_uuid_discovery_filter_ok(false);
         return false;
@@ -358,14 +367,10 @@ bool BluezTransport::central_connect()
         // Stop active discovery before connecting to avoid object churn/aborts.
         if (impl_->discovery_on.load())
         {
-            bool stop_disc = adapter_stop_discovery_locked(impl_->bus, impl_->adapter_path,
-                                                           impl_->discovery_on);
-            if (!stop_disc)
-            {
-                LOG_SYSTEM("[BLUEZ][central] central connect failed when trying to stop "
-                           "discovery");
-            }
+            (void)adapter_stop_discovery_locked(impl_->bus, impl_->adapter_path,
+                                                impl_->discovery_on);
         }
+
         // Always submit Connect()
         int r = sd_bus_call_method_async(impl_->bus, &impl_->connect_call_slot, "org.bluez",
                                          dev_path().c_str(), "org.bluez.Device1", "Connect",
@@ -588,10 +593,11 @@ bool BluezTransport::central_find_gatt_paths()
             break;  // {oa{sa{sv}}}
     }
 
-    sd_bus_message_unref(reply);
+done_scan:
+    if (reply)
+        sd_bus_message_unref(reply);
     sd_bus_error_free(&err);
 
-done_scan:
     bool have_all = !impl_->peer_svc_path.empty() && !impl_->peer_tx_path.empty() &&
                     !impl_->peer_rx_path.empty();
     if (have_all)
@@ -621,10 +627,6 @@ bool BluezTransport::central_enable_notify()
 
     std::lock_guard<std::mutex> lk(impl_->bus_mu);
     bool ok = char_start_notify_locked(impl_->bus, impl_->peer_tx_path, impl_->subscribed);
-    if (ok && impl_->discovery_on.load())
-    {
-        (void)adapter_stop_discovery_locked(impl_->bus, impl_->adapter_path, impl_->discovery_on);
-    }
     return ok;
 #endif
 }
@@ -635,21 +637,34 @@ bool BluezTransport::central_enable_notify()
 // - Out: true if the walk succeeds, may set dev_path from cache
 // - Note: does not start active discovery
 // ======================================================================
-bool BluezTransport::central_cold_scan()
+bool BluezTransport::central_cold_scan(bool refresh_only)
 {
 #if !BITCHAT_HAVE_SDBUS
     return false;
 #else
-    std::lock_guard<std::mutex> lk(impl_->bus_mu);
-    // enumerate and try to seed dev_path() from BlueZ cache
     sd_bus_message *reply = nullptr;
     sd_bus_error err{};
-    int r = sd_bus_call_method(impl_->bus, "org.bluez", "/", "org.freedesktop.DBus.ObjectManager",
+    int r = 0;
+    {
+        std::lock_guard<std::mutex> lk(impl_->bus_mu);
+        if (!impl_->bus)
+            return false;
+        r = sd_bus_call_method(impl_->bus, "org.bluez", "/", "org.freedesktop.DBus.ObjectManager",
                                "GetManagedObjects", &err, &reply, "");
+    }
+
     if (r < 0)
     {
-        LOG_WARN("[BLUEZ][central] GetManagedObjects failed: %s",
-                 err.message ? err.message : strerror(-r));
+        if (-r == EBADMSG)
+        {
+            LOG_INFO("[BLUEZ][central] GetManagedObjects transient EBADMSG; will retry");
+        }
+        else
+        {
+            LOG_WARN("[BLUEZ][central] GetManagedObjects failed: %s",
+                     err.message ? err.message : strerror(-r));
+        }
+
         sd_bus_error_free(&err);
         if (reply)
             sd_bus_message_unref(reply);
@@ -657,14 +672,18 @@ bool BluezTransport::central_cold_scan()
     }
 
     const std::string dev_prefix = "/org/bluez/" + cfg_.adapter + "/dev_";
-    const std::string want_uuid = cfg_.svc_uuid;
+    const std::string &want_uuid = cfg_.svc_uuid;
 
-    bool found = false;
-    std::string found_path;
-    std::string addr;
-    int16_t rssi = 0;
-    bool have_rssi = false;
-    bool svc_hit = false;
+    // collect results locally
+    struct LocalDev
+    {
+        std::string path, addr;
+        int16_t rssi;
+        bool have_rssi;
+        bool svc_hit;
+    };
+    std::vector<LocalDev> found;
+    found.reserve(8);
 
     // Walk a{oa{sa{sv}}}
     r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "{oa{sa{sv}}}");
@@ -700,11 +719,11 @@ bool BluezTransport::central_cold_scan()
         }
 
         // reset per-device state
-        svc_hit = false;
-        addr.clear();
-        have_rssi = false;
-        rssi = 0;
-        // --- Interfaces
+        bool device_svc_hit = false;
+        std::string device_addr;
+        int16_t device_rssi = 0;
+        bool device_have_rssi = false;
+
         if ((r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "{sa{sv}}")) < 0)
             goto out;
         while ((r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_DICT_ENTRY, "sa{sv}")) > 0)
@@ -730,18 +749,18 @@ bool BluezTransport::central_cold_scan()
                         bool hit = false;
                         if ((r = var_as_has_uuid(reply, want_uuid, hit)) < 0)
                             goto out;
-                        svc_hit |= hit;
+                        device_svc_hit |= hit;
                     }
                     else if (key && std::strcmp(key, "Address") == 0)
                     {
-                        if ((r = read_var_s(reply, addr)) < 0)
+                        if ((r = read_var_s(reply, device_addr)) < 0)
                             goto out;
                     }
                     else if (key && std::strcmp(key, "RSSI") == 0)
                     {
-                        if ((r = read_var_i16(reply, rssi)) < 0)
+                        if ((r = read_var_i16(reply, device_rssi)) < 0)
                             goto out;
-                        have_rssi = true;
+                        device_have_rssi = true;
                     }
                     else
                     {
@@ -772,49 +791,56 @@ bool BluezTransport::central_cold_scan()
         if ((r = sd_bus_message_exit_container(reply)) < 0)
             goto out;  // {oa{sa{sv}}}
 
-        // Found candidate device, apply filtering logic:
-        // - If has peer_addr set: match MAC or path, do not require svc_hit
-        // - If no peer_addr set: require svc_hit
-        if (cfg_.peer_addr && !cfg_.peer_addr->empty())
-        {
-            bool ok = (!addr.empty() && mac_eq(addr, *cfg_.peer_addr));
-            if (!ok)
-                ok = path_mac_eq(path, *cfg_.peer_addr);
-            if (ok)
-            {
-                found = true;
-                found_path = std::move(path);
-                break;
-            }
-        }
-        else if (svc_hit)
-        {
-            found = true;
-            found_path = std::move(path);
-            break;
-        }
+        // Buffer all device entries; filter/adopt after we re-acquire the lock
+        found.push_back(LocalDev{path, device_addr, device_rssi, device_have_rssi,
+                                 device_svc_hit});
     }
     if (r < 0)
         goto out;
 
-    // Only write dev_path() if we found a device and it was not already set.
-    if (found && dev_path().empty())
+    // Re-acquire lock to update cache and maybe adopt dev_path
     {
-        set_dev_path(found_path.c_str());
-        if (have_rssi)
+        std::lock_guard<std::mutex> lk(impl_->bus_mu);
+        bool has_peer = (cfg_.peer_addr && !cfg_.peer_addr->empty());
+        bool adopted = false;
+        for (const auto &d : found)
         {
-            LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s rssi=%d (svc hit)",
-                       found_path.c_str(), addr.empty() ? "?" : addr.c_str(), (int)rssi);
-        }
-        else
-        {
-            LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s (svc hit)", found_path.c_str(),
-                       addr.empty() ? "?" : addr.c_str());
+            bool candidate_ok = false;
+            if (has_peer)
+            {
+                bool ok = (!d.addr.empty() && mac_eq(d.addr, *cfg_.peer_addr));
+                if (!ok)
+                    ok = path_mac_eq(d.path, *cfg_.peer_addr);
+                candidate_ok = ok;  // strict: if peer is set, must match it
+            }
+            else
+            {
+                candidate_ok = d.svc_hit;
+            }
+            if (!candidate_ok)
+                continue;
+            if (!d.addr.empty())
+            {
+                // write candidates cache
+                note_candidate(d.addr, d.have_rssi ? d.rssi : 0);
+            }
+            if (has_peer && !refresh_only && !adopted && dev_path().empty())
+            {
+                set_dev_path(d.path.c_str());
+                adopted = true;
+                if (d.have_rssi)
+                    LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s rssi=%d (svc hit)",
+                               d.path.c_str(), d.addr.empty() ? "?" : d.addr.c_str(), (int)d.rssi);
+                else
+                    LOG_SYSTEM("[BLUEZ][central] cold-scan found %s addr=%s (svc hit)",
+                               d.path.c_str(), d.addr.empty() ? "?" : d.addr.c_str());
+            }
         }
     }
 
 out:
-    sd_bus_message_unref(reply);
+    if (reply)
+        sd_bus_message_unref(reply);
     sd_bus_error_free(&err);
     return r >= 0;
 #endif
@@ -970,11 +996,25 @@ void BluezTransport::central_pump()
     // If we don't have a device yet, try to pick one from current BlueZ objects.
     if (dev_path().empty())
     {
-        (void)central_cold_scan();
+        using namespace std::chrono;
+        const uint64_t now_ms =
+            (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+        bool do_scan = false;
+        {
+            std::lock_guard<std::mutex> lk(impl_->bus_mu);
+            if (now_ms - impl_->last_refresh_ms >= impl_->refresh_min_interval_ms)
+            {
+                do_scan = true;
+                impl_->last_refresh_ms = now_ms;
+            }
+        }
+        if (do_scan)
+            (void)central_cold_scan();
     }
 
-    // connect once when device is known
-    if (!dev_path().empty() && !connected() && !impl_->connect_inflight.load())
+    // connect once when device is known, but only if peer_addr is set
+    const bool want_connect = (cfg_.peer_addr && !cfg_.peer_addr->empty());
+    if (want_connect && !dev_path().empty() && !connected() && !impl_->connect_inflight.load())
     {
         uint64_t now_ms =
             (uint64_t)std::chrono::duration_cast<
@@ -1006,23 +1046,53 @@ void BluezTransport::central_pump()
         }
     }
 
-    // when subscribed, stop discovery
-    if (subscribed() && impl_->discovery_on.load() && impl_->bus)
+    // Discovery policy:
+    //   - OFF while a connection attempt is in-flight (some controllers abort if scanning)
+    //   - ON otherwise (so we can enumerate peers / handover quickly)
+    if (impl_->bus)
     {
         std::lock_guard<std::mutex> lk(impl_->bus_mu);
-        bool stop_disc = adapter_stop_discovery_locked(impl_->bus, impl_->adapter_path,
-                                                       impl_->discovery_on);
-        if (!stop_disc)
+        if (impl_->connect_inflight.load())
         {
-            LOG_SYSTEM("[BLUEZ][central] central pump failed when trying to stop discovery after "
-                       "subscribed");
+            if (impl_->discovery_on.load())
+            {
+                (void)adapter_stop_discovery_locked(impl_->bus, impl_->adapter_path,
+                                                    impl_->discovery_on);
+            }
+        }
+        else
+        {
+            if (!impl_->discovery_on.load())
+            {
+                (void)adapter_start_discovery_locked(impl_->bus, impl_->adapter_path,
+                                                     impl_->discovery_on);
+            }
         }
     }
-    else if (!subscribed() && impl_->bus)
+
+    // Async candidates refresh on bus thread
+    using namespace std::chrono;
+    const uint64_t now_ms =
+        (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    bool do_refresh = impl_->refresh_req.exchange(false, std::memory_order_acq_rel);
+    uint64_t last_ms = 0;
+    uint32_t periodic_ms = 0;
     {
         std::lock_guard<std::mutex> lk(impl_->bus_mu);
-        (void)adapter_start_discovery_locked(impl_->bus, impl_->adapter_path, impl_->discovery_on);
+        last_ms = impl_->last_refresh_ms;
+        periodic_ms = impl_->refresh_periodic_ms;
+        if (!do_refresh && (now_ms - last_ms >= periodic_ms))
+        {
+            do_refresh = true;
+        }
     }
+    if (do_refresh && impl_->bus)
+    {
+        (void)central_cold_scan(true);  // refresh cache only
+        std::lock_guard<std::mutex> lk(impl_->bus_mu);
+        impl_->last_refresh_ms = now_ms;
+    }
+
 #endif
 }
 
@@ -1194,8 +1264,9 @@ bool BluezTransport::start_central()
                     if (pr <= 0)
                         break;
                 }
-                // NOTE: callbacks invoked by sd_bus_process run in this same thread
-                // and may call bus functions; that's fine while we hold the lock.
+            }
+            // do not hold the lock while waiting, otherwise the cli will deadlock
+            {
                 const uint64_t WAIT_USEC = 100000;  // 100ms
                 sd_bus_wait(impl_->bus, WAIT_USEC);
             }
@@ -1264,6 +1335,92 @@ void BluezTransport::stop_central()
         impl_->bus = nullptr;
     }
 // clang-format on
+#endif
+}
+
+// ======================================================================
+// Function: BluezTransport::handover_to
+// - In: addr in AA:BB:CC:DD:EE:FF format
+// - Out: stops current connection and starts connecting to addr
+// - Note: the actual connect is done in central_pump()
+// ======================================================================
+bool BluezTransport::handover_to(const std::string &addr)
+{
+#if !BITCHAT_HAVE_SDBUS
+    (void)addr;
+    return false;
+#else
+    if (!impl_ || !impl_->bus)
+        return false;
+
+    LOG_DEBUG("[BLUEZ][handover] to %s...", addr.c_str());
+
+    {
+        std::lock_guard<std::mutex> lk(impl_->bus_mu);
+
+        // stop discovery if running
+        if (impl_->discovery_on.load())
+        {
+            (void)adapter_stop_discovery_locked(impl_->bus, impl_->adapter_path,
+                                                impl_->discovery_on);
+        }
+
+        // if having an in-flight connection attempt, cancel its callback to avoid interference
+        if (impl_->connect_inflight.load())
+        {
+            unref_slot(impl_->connect_call_slot);
+            impl_->connect_inflight.store(false);
+        }
+
+        // disconnect old device (best-effort)
+        if (!impl_->dev_path.empty())
+        {
+            sd_bus_error derr = SD_BUS_ERROR_NULL;
+            sd_bus_message *drep = nullptr;
+            (void)sd_bus_call_method(impl_->bus, "org.bluez", impl_->dev_path.c_str(),
+                                     "org.bluez.Device1", "Disconnect", &derr, &drep, "");
+            if (drep)
+                sd_bus_message_unref(drep);
+            sd_bus_error_free(&derr);
+
+            // sd_bus_error rerr = SD_BUS_ERROR_NULL;
+            // sd_bus_message *rrep = nullptr;
+            // (void)sd_bus_call_method(impl_->bus, "org.bluez", impl_->adapter_path.c_str(),
+            //                          "org.bluez.Adapter1", "RemoveDevice",
+            //                          &rerr, &rrep, "o", impl_->dev_path.c_str());
+            // if (rrep) sd_bus_message_unref(rrep);
+            // sd_bus_error_free(&rerr);
+        }
+
+        // clear state
+        impl_->peer_svc_path.clear();
+        impl_->peer_tx_path.clear();
+        impl_->peer_rx_path.clear();
+        impl_->dev_path.clear();
+        impl_->connected.store(false);
+        impl_->subscribed.store(false);
+        impl_->services_resolved.store(false);
+        impl_->discover_submitted.store(false);
+
+        // backoff, sleep 300ms and then connect
+        using namespace std::chrono;
+        const uint64_t now_ms =
+            (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+        impl_->next_connect_at_ms = now_ms + 300;
+
+        // Set new target peer
+        cfg_.peer_addr = addr;
+        // requrire a cold scan for the next round
+        impl_->refresh_req.store(true, std::memory_order_release);
+        impl_->last_refresh_ms = 0;
+    }
+
+    // set filter and restart discovery immediately
+    (void)central_set_discovery_filter();
+    (void)central_start_discovery();
+
+    LOG_SYSTEM("[BLUEZ][handover] target=%s", addr.c_str());
+    return true;
 #endif
 }
 

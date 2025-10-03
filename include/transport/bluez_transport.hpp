@@ -4,6 +4,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "transport/itransport.hpp"
 #include "util/constants.hpp"
@@ -26,6 +27,12 @@ inline void unref_slot(sd_bus_slot *&s)
 
 namespace transport
 {
+
+struct PeerInfo
+{
+    std::string addr;
+    int16_t     rssi;
+};
 
 enum class Role
 {
@@ -95,6 +102,17 @@ class BluezTransport final : public ITransport
 
     void emit_tx_props_changed(const char *prop);
 
+    // list all known peers (central role)
+    // will open scan temperarily if needed, read GetManagedObjects and export <MAC,RSSI> list
+    std::vector<PeerInfo> list_peers();
+    // stop current connection and handover to addr
+    // addr must be AA:BB:CC:DD:EE:FF format
+    bool handover_to(const std::string &addr);
+    // Updates/creates a candidate entry with current rssi and timestamp.
+    void note_candidate(const std::string &addr, int16_t rssi);
+    // Ask the bus thread to refresh the candidates via GetManagedObjects (async)
+    void request_candidate_refresh();
+
   private:
     BluezConfig      cfg_;
     Settings         settings_{};
@@ -123,7 +141,7 @@ class BluezTransport final : public ITransport
     void stop_central();
     bool send_central_impl(const Frame &frame);
     bool central_write_frame(const Frame &f);
-    bool central_cold_scan();
+    bool central_cold_scan(bool refresh_only = false);
     bool central_start_discovery();
     bool central_connect();
     bool central_write(const uint8_t *data, size_t len);

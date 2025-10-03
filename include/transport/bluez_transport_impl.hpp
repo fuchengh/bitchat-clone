@@ -1,9 +1,12 @@
 // include/transport/bluez_transport_impl.hpp
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
+
 struct sd_bus;
 struct sd_bus_slot;
 
@@ -58,6 +61,27 @@ struct BluezTransport::Impl
     uint64_t         next_connect_at_ms{0};
     // inter-fragment pause in ms
     uint32_t tx_pause_ms{100};
+
+    // ---- Candidate cache (updated from BlueZ callbacks) ----
+    struct Candidate
+    {
+        std::string addr;          // "AA:BB:CC:DD:EE:FF"
+        int16_t     rssi;          // 0 if unknown
+        uint64_t    last_seen_ms;  // steady_clock ms
+    };
+    // Guarded by bus_mu: callbacks run under bus_mu; readers must also lock bus_mu.
+    std::unordered_map<std::string, Candidate> candidates;
+    // ---- Async refresh control (set by IPC thread, consumed by bus thread) ----
+    std::atomic<bool> refresh_req{false};             // request an async candidates refresh
+    uint64_t          last_refresh_ms{0};             // last time we refreshed (ms)
+    uint32_t          refresh_min_interval_ms{2000};  // throttle (default 2s)
+    uint32_t          refresh_periodic_ms{5000};      // periodic refresh (default 5s)
+
+    // ---- Handover (single-connection switching) ----
+    // When set, bus thread performs: disconnect current -> adopt desired_addr -> connect.
+    std::atomic<bool> handover_pending{false};
+    std::string       desired_addr;               // target MAC, uppercase, colon-delimited
+    bool              desired_addr_valid{false};  // guarded by bus_mu
 
     std::atomic_bool notifying{false};  // TX notify state
     std::string      unique_name;       // our bus unique name (debug)
