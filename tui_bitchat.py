@@ -18,12 +18,17 @@ import io
 
 # ======================= Domain state =======================
 
+MAILBOX_ID = "__mailbox__"
+MAILBOX_DISPLAY = "Mailbox"
+
 
 @dataclass
 class Message:
     ts: datetime
     direction: str  # "in" | "out" | "sys"
     text: str
+    # for showing sender's id, could be user Id (if set/sent hello) or MAC
+    sender: Optional[str] = None
 
 
 @dataclass
@@ -39,6 +44,11 @@ class ChatState:
     def __init__(self):
         self.peers: Dict[str, Peer] = {}
         self.current_peer: Optional[str] = None
+        self.mailbox_unread: int = 0
+        # create mailbox peer by default, and set as initial vie
+        mb = Peer(peer_id=MAILBOX_ID, display=MAILBOX_DISPLAY)
+        self.peers[MAILBOX_ID] = mb
+        self.current_peer = MAILBOX_ID
 
     def upsert_peer(self, peer_id: str, display: Optional[str] = None) -> Peer:
         p = self.peers.get(peer_id)
@@ -52,11 +62,20 @@ class ChatState:
         p.last_seen = datetime.now()
         return p
 
-    def add_msg(self, peer_id: str, msg: Message):
+    def add_msg(self, peer_id: str, msg: Message, *, count_unread: bool = True):
         p = self.upsert_peer(peer_id)
         p.history.append(msg)
         if len(p.history) > 1000:
             del p.history[:-1000]
+        # Only count direction = in (ignore system messages like hello)
+        if peer_id == MAILBOX_ID and msg.direction == "in" and count_unread:
+            self.mailbox_unread += 1
+
+    def reset_mailbox_unread(self):
+        self.mailbox_unread = 0
+
+    def get_mailbox_unread(self) -> int:
+        return self.mailbox_unread
 
 
 # ======================= Small helpers =======================
@@ -265,6 +284,12 @@ class DaemonManager:
         self.rx_stop_disc = re.compile(r"StopDiscovery OK", re.I)
         self.rx_adv_ok = re.compile(r"LE advertisement registered successfully")
         self.rx_listen = re.compile(r"Listening on\s+(\S+)")
+        # "bitchatctl peers" output
+        self.rx_peer_line = re.compile(
+            r"\[PEER\]\s+([0-9A-F:]{17})\s+rssi=(-?\d+)", re.I
+        )
+        self.rx_peers_empty = re.compile(r"\[PEERS\]\s+no peers found", re.I)
+
         # parse user id
         self.rx_ctrl_hello_in = re.compile(
             r"\[CTRL\]\s+HELLO in:\s+user='([^']*)'\s+caps=0x([0-9A-Fa-f]{8})"
@@ -291,6 +316,12 @@ class DaemonManager:
         # track /org/bluez/... dev path -> MAC
         self.dev_to_mac: Dict[str, str] = {}
 
+        # if peripheral receives hello/msg, cache the sender id here
+        self.mailbox_sender: Optional[str] = None
+        # which peer MAC already had a HELLO applied to UI
+        self.hello_seen: set[str] = set()
+        self.namebook: Dict[str, str] = {}
+
     async def start(self):
         await self.central.start()
         await self.periph.start()
@@ -315,6 +346,8 @@ class DaemonManager:
                 await run_bitchatctl(s, "tail", "on")
             except Exception:
                 pass
+        # background: poll peers so UI can populate even without "found" logs
+        self._tasks.append(asyncio.create_task(self._peer_scan_loop()))
 
     async def stop(self):
         to_cancel = [t for t in self._tasks if isinstance(t, asyncio.Task)]
@@ -406,8 +439,49 @@ class DaemonManager:
         # 1) Incoming payload
         m = self.rx_recv.search(line)
         if m:
-            pid = self.state.current_peer or tag
-            self.state.add_msg(pid, Message(datetime.now(), "in", m.group(1)))
+            text = m.group(1)
+            if tag == "peripheral":
+                # first sned it to mailbox, add count unread, sender from HELLO if any
+                self.state.add_msg(
+                    MAILBOX_ID,
+                    Message(datetime.now(), "in", text, sender=self.mailbox_sender),
+                )
+                # If we are also connected to a peer, mirror the message there too
+                if self.central_ready and self.active_mac:
+                    # Prefer mailbox_sender (user id learned from HELLO) as the sender label
+                    # and persist it into the namebook for this MAC.
+                    if self.mailbox_sender:
+                        self.namebook[self.active_mac] = self.mailbox_sender
+                    current_disp = self.state.peers.get(
+                        self.active_mac, Peer(self.active_mac, self.active_mac)
+                    ).display
+                    peer_sender = self.mailbox_sender or self.namebook.get(
+                        self.active_mac, current_disp
+                    )
+
+                    # Upgrade list display from MAC -> user id if we have it.
+                    disp = self.namebook.get(self.active_mac, current_disp)
+                    if disp != current_disp:
+                        self.state.upsert_peer(self.active_mac, display=disp)
+                        self.hello_seen.add(self.active_mac)
+                    self.state.add_msg(
+                        self.active_mac,
+                        Message(datetime.now(), "in", text, sender=peer_sender),
+                    )
+            else:
+                # in some cases central will also receive messages for mailbox, mirror there too
+                pid = self.active_mac or self.state.current_peer or "peer"
+                sender = None
+                if pid and pid in self.state.peers:
+                    sender = self.state.peers[pid].display
+                self.state.add_msg(
+                    pid, Message(datetime.now(), "in", text, sender=sender)
+                )
+                self.state.add_msg(
+                    MAILBOX_ID,
+                    Message(datetime.now(), "in", text, sender=sender),
+                    count_unread=False,
+                )
             return
 
         # 2) Discovery: remember dev_path -> MAC, create/refresh peer
@@ -415,7 +489,13 @@ class DaemonManager:
         if m:
             dev_path, mac = m.group(1), m.group(2)
             self.dev_to_mac[dev_path] = mac
-            self.state.upsert_peer(mac, display=mac)
+            self.state.upsert_peer(mac, display=self.namebook.get(mac, mac))
+            return
+        # and from explicit "bitchatctl peers" results (reliable)
+        m = self.rx_peer_line.search(line)
+        if m:
+            mac = m.group(1)
+            self.state.upsert_peer(mac, display=self.namebook.get(mac, mac))
             return
 
         # 3) Connected (two shapes)
@@ -423,7 +503,7 @@ class DaemonManager:
         if m:
             dev_path = m.group(1)
             mac = self.dev_to_mac.get(dev_path, self.state.current_peer or "peer")
-            p = self.state.upsert_peer(mac, display=mac)
+            p = self.state.upsert_peer(mac, display=self.namebook.get(mac, mac))
             p.is_connected = True
             self.central_connected = True
             self.active_mac = mac
@@ -439,6 +519,23 @@ class DaemonManager:
             mac = self.state.current_peer
             if mac and mac in self.state.peers:
                 self.state.peers[mac].is_connected = True
+                # If we already learned user id from mailbox before central became ready,
+                # apply it and persist in namebook so peers list/chat shows the name.
+                if self.mailbox_sender:
+                    self.namebook[mac] = self.mailbox_sender
+                disp = self.namebook.get(mac, self.state.peers[mac].display)
+                if disp != self.state.peers[mac].display:
+                    self.state.upsert_peer(mac, display=disp)
+                    self.state.add_msg(
+                        mac,
+                        Message(
+                            datetime.now(),
+                            "sys",
+                            f"(hello) peer {mac}'s id is '{disp}'",
+                        ),
+                    )
+                    self.hello_seen.add(mac)
+                self.hello_seen.add(mac)
             self.state.add_msg(
                 mac or "peer",
                 Message(datetime.now(), "sys", "ready - notifications enabled"),
@@ -450,13 +547,15 @@ class DaemonManager:
         if m:
             dev_path = m.group(1)
             mac = self.dev_to_mac.get(dev_path, self.state.current_peer or "peer")
-            p = self.state.upsert_peer(mac, display=mac)
+            p = self.state.upsert_peer(mac, display=self.namebook.get(mac, mac))
             p.is_connected = False
             self.central_connected = False
             self.central_ready = False
             self.active_mac = None
             self.psk_peer = False
             self.aead_active = False
+            self.mailbox_sender = None
+            self.hello_seen.discard(mac)
             self.state.add_msg(mac, Message(datetime.now(), "sys", "link down"))
             return
 
@@ -476,20 +575,53 @@ class DaemonManager:
         if m:
             user = m.group(1)
             caps = int(m.group(2), 16)
-            if self.active_mac:
-                disp = (
-                    user if user else self.active_mac
-                )  # if user id is not set, use mac addr
-                self.state.upsert_peer(self.active_mac, display=disp)
-                self.psk_peer = bool(caps & 0x1)  # bit0 = AEAD_PSK_SUPPORTED
+            if tag == "central":
+                # hello seen on central -> update peer user Id
+                if self.active_mac:
+                    if user:
+                        self.namebook[self.active_mac] = user
+                    disp = self.namebook.get(self.active_mac, user or self.active_mac)
+                    self.state.upsert_peer(self.active_mac, display=disp)
+                    self.psk_peer = bool(caps & 0x1)  # bit0 = AEAD_PSK_SUPPORTED
+                    self.state.add_msg(
+                        self.active_mac,
+                        Message(
+                            datetime.now(),
+                            "sys",
+                            f"(hello) peer {self.active_mac}'s id is '{user or '<none>'}'",
+                        ),
+                    )
+                    self.hello_seen.add(self.active_mac)
+            else:  # tag == "peripheral"
+                # put peripheral hello to mailbox
+                self.mailbox_sender = user or None
                 self.state.add_msg(
-                    self.active_mac,
+                    MAILBOX_ID,
                     Message(
                         datetime.now(),
                         "sys",
                         f"(hello) peer id is '{user or '<none>'}'",
                     ),
                 )
+                if (
+                    self.central_ready
+                    and self.active_mac
+                    and self.active_mac not in self.hello_seen
+                ):
+                    if user:
+                        self.namebook[self.active_mac] = user
+                    disp = self.namebook.get(self.active_mac, user or self.active_mac)
+                    self.state.upsert_peer(self.active_mac, display=disp)
+                    self.psk_peer = bool(caps & 0x1)
+                    self.state.add_msg(
+                        self.active_mac,
+                        Message(
+                            datetime.now(),
+                            "sys",
+                            f"(hello) peer {self.active_mac}'s id is '{user or '<none>'}'",
+                        ),
+                    )
+                    self.hello_seen.add(self.active_mac)
             return
 
         # 8) Show my PSK and peer's PSK state
@@ -498,6 +630,46 @@ class DaemonManager:
             caps = int(m.group(2), 16)
             self.psk_local = bool(caps & 0x1)
             return
+
+    async def switch_peer(self, peer_mac: str):
+        # If we're already linked to this MAC and ready, it's just a view switch.
+        if self.active_mac == peer_mac and self.central_ready:
+            self.state.current_peer = peer_mac
+            return
+        # already selected & connected; nothing to do
+        if peer_mac == self.state.current_peer and (
+            self.central_ready or self.central_connected
+        ):
+            return
+        # real handover to a different MAC
+        self.state.current_peer = peer_mac
+        self.active_mac = None
+        self.central_connected = False
+        self.central_ready = False
+        try:
+            await self._wait_sock(self.central.sock)
+            await run_bitchatctl(self.central.sock, "connect", peer_mac)
+        except Exception:
+            pass
+
+    async def disconnect(self):
+        try:
+            await self._wait_sock(self.central.sock)
+            await run_bitchatctl(self.central.sock, "disconnect")
+        except Exception:
+            pass
+        self.active_mac = None
+        self.central_connected = False
+        self.central_ready = False
+
+    async def _peer_scan_loop(self):
+        while True:
+            try:
+                await self._wait_sock(self.central.sock)
+                await run_bitchatctl(self.central.sock, "peers")
+            except Exception:
+                pass
+            await asyncio.sleep(10.0)  # in daemon, we cache peers for 120s
 
     def has_selected_peer(self) -> bool:
         return bool(
@@ -508,37 +680,11 @@ class DaemonManager:
         return self.has_selected_peer() and self.central_ready
 
     async def send_text(self, text: str):
+        if self.state.current_peer == MAILBOX_ID:
+            raise RuntimeError("mailbox is incoming-only")
         if not self.is_ready():
             raise RuntimeError("not connected/subscribed")
         await run_bitchatctl(self.central.sock, "send", text)
-
-    async def switch_peer(self, peer_mac: str):
-        # cleanup finished tasks to avoid growth
-        self._tasks = [t for t in self._tasks if not t.done()]
-        # Restart central with a peer filter env
-        await self.central.stop()
-        self.central = DaemonProc(
-            "central",
-            "~/.cache/bitchat-clone/central.sock",
-            env_extra={"BITCHAT_PEER": peer_mac},
-        )
-        self.central_connected = False
-        self.central_ready = False
-        self.dev_to_mac.clear()
-        await self.central.start()
-        if self.central.proc and self.central.proc.stdout:
-            self._tasks.append(
-                asyncio.create_task(
-                    self._read_loop("central", self.central.proc.stdout)
-                )
-            )
-        # Re-enable tail for the new central daemon so [RECV] shows up
-        await self._wait_sock(self.central.sock)
-        try:
-            await run_bitchatctl(self.central.sock, "tail", "on")
-        except Exception:
-            pass
-        self.state.current_peer = peer_mac
 
     def status_summary(self) -> str:
         c = (
@@ -560,10 +706,12 @@ class DaemonManager:
             sec = "🔓"  # plaintext (missing PSK or no KEX)
 
         peer_disp = "-"
-        if self.active_mac and self.active_mac in self.state.peers:
-            peer_disp = self.state.peers[self.active_mac].display
+        curr = self.state.current_peer
+        if curr and curr in self.state.peers:
+            peer_disp = self.state.peers[curr].display
         myid = self.user_id_env if len(self.user_id_env) != 0 else self.local_id
-        return f"My ID: {myid} | central: {c} | peripheral: {p} | peer: {peer_disp} | sec: {sec}"
+        inbox = self.state.get_mailbox_unread()
+        return f"My ID: {myid} | central: {c} | peripheral: {p} | peer: {peer_disp} | sec: {sec} | inbox:{inbox}"
 
     async def _wait_sock(self, path: str, timeout: float = 3.0):
         """Wait until the AF_UNIX control socket is listening."""
@@ -609,41 +757,84 @@ class PeersPanel(Static):
     def __init__(self, app_ref: "BitChat"):
         super().__init__()
         self.app_ref = app_ref
-        self.list = ListView()
-        self._last_snapshot: Optional[Tuple[Tuple[str, str, bool], ...]] = None
+        self.list = ListView(id="peers-list")
+        self._last_snapshot: Optional[
+            Tuple[
+                Optional[str],  # current selected peer
+                int,  # mailbox unread
+                Tuple[Tuple[str, str, bool], ...],  # peers (pid, display, connected)
+            ]
+        ] = None
         self.view_pids: List[str] = []
+        self._labels: Dict[str, Label] = {}
+        self._label_texts: Dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Label("Peers", id="peers-title")
         yield self.list
 
     def refresh_peers(self):
-        snapshot = tuple(
-            (pid, p.display, p.is_connected)
-            for pid, p in self.app_ref.state.peers.items()
-        )
-        if snapshot == self._last_snapshot:
-            return
-        self._last_snapshot = snapshot
-
-        self.list.clear()
+        # put mailbox on top, others sorted by userId
+        peers_items = [
+            (pid, p) for pid, p in self.app_ref.state.peers.items() if pid != MAILBOX_ID
+        ]
         peers_sorted = sorted(
-            self.app_ref.state.peers.items(),
-            key=lambda kv: (kv[1].display.lower(), kv[0]),
+            peers_items, key=lambda kv: (kv[1].display.lower(), kv[0])
         )
-        self.view_pids = [pid for pid, _ in peers_sorted]
         current_pid = self.app_ref.state.current_peer
-        current_idx = (
-            self.view_pids.index(current_pid) if current_pid in self.view_pids else None
+        mb_unread = self.app_ref.state.get_mailbox_unread()
+        snapshot: Tuple[Optional[str], int, Tuple[Tuple[str, str, bool], ...]] = (
+            current_pid,
+            mb_unread,
+            tuple((pid, p.display, p.is_connected) for pid, p in peers_sorted),
         )
+        target_pids = [MAILBOX_ID] + [pid for pid, _ in peers_sorted]
 
-        for pid, p in peers_sorted:
-            dot = "● " if p.is_connected else "○ "
-            self.list.append(ListItem(Label(f"{dot}{p.display}")))
+        if self.view_pids != target_pids or self._last_snapshot is None:
+            self._last_snapshot = snapshot
+            self.view_pids = target_pids
+            self._labels.clear()
+            self._label_texts.clear()
+            self.list.clear()
+            # Mailbox item
+            mb_text = f"📥 Mailbox ({mb_unread})" if mb_unread else "📥 Mailbox"
+            lbl = Label(mb_text)
+            self._labels[MAILBOX_ID] = lbl
+            self.list.append(ListItem(lbl))
+            # Peer items
+            for pid, p in peers_sorted:
+                dot = "● " if p.is_connected else "○ "
+                text = f"{dot}{p.display}"
+                lbl = Label(text)
+                self._labels[pid] = lbl
+                self._label_texts[pid] = text
+                self.list.append(ListItem(lbl))
+        else:
+            self._last_snapshot = snapshot
+            # mailbox
+            mb_text = f"📥 Mailbox ({mb_unread})" if mb_unread else "📥 Mailbox"
+            if (lbl := self._labels.get(MAILBOX_ID)) and self._label_texts.get(
+                MAILBOX_ID
+            ) != mb_text:
+                lbl.update(mb_text)
+                self._label_texts[MAILBOX_ID] = mb_text
 
-        if current_idx is not None:
+            # peers
+            for pid, p in peers_sorted:
+                dot = "● " if p.is_connected else "○ "
+                text = f"{dot}{p.display}"
+                if (lbl := self._labels.get(pid)) and self._label_texts.get(
+                    pid
+                ) != text:
+                    lbl.update(text)
+                    self._label_texts[pid] = text
+
+        # keep current selection if possible
+        if current_pid in self.view_pids:
             try:
-                self.list.index = current_idx
+                new_idx = self.view_pids.index(current_pid)
+                if self.list.index != new_idx:
+                    self.list.index = new_idx
             except Exception:
                 pass
 
@@ -654,6 +845,18 @@ class PeersPanel(Static):
         if idx < 0 or idx >= len(self.view_pids):
             return
         pid = self.view_pids[idx]
+        if pid == MAILBOX_ID:
+            # Switch to mailbox view only (no daemon restart); reset unread
+            self.app_ref.state.current_peer = MAILBOX_ID
+            self.app_ref.state.reset_mailbox_unread()
+            self.app_ref.refresh_all()
+            return
+        # do not reconnect if select same peer
+        if pid == self.app_ref.state.current_peer and (
+            self.app_ref.manager.central_ready or self.app_ref.manager.central_connected
+        ):
+            return
+        # normal peer: hand over to this MAC
         await self.app_ref.manager.switch_peer(pid)
         self.app_ref.refresh_all()
 
@@ -676,11 +879,20 @@ class ChatView(Static):
         lines = []
         for m in self.app_ref.state.peers[pid].history[-300:]:
             t = m.ts.strftime("%H:%M:%S")
-            who = (
-                "You"
-                if m.direction == "out"
-                else ("Peer" if m.direction == "in" else "Sys")
-            )
+            if m.direction == "out":
+                who = "You"
+            elif m.direction == "sys":
+                who = "Sys"
+            else:
+                # incoming message: show sender if any, else peer display
+                if m.sender:
+                    who = m.sender
+                else:
+                    who = (
+                        self.app_ref.state.peers[pid].display
+                        if pid != MAILBOX_ID
+                        else "Peer"
+                    )
             lines.append(f"[{t}] {who}: {m.text}")
         self.chat_content.update("\n".join(lines) or "(empty)")
 
@@ -689,13 +901,18 @@ class InputBar(Static):
     def __init__(self, app_ref: "BitChat"):
         super().__init__()
         self.app_ref = app_ref
-        self.input = Input(placeholder="Type message... (Enter to send)", id="chat-input")
+        self.input = Input(
+            placeholder="Type message... (Enter to send)", id="chat-input"
+        )
         self.enabled: bool = True
 
     def compose(self) -> ComposeResult:
         yield self.input
 
     def set_enabled(self, enabled: bool):
+        # mailbox is incoming-only
+        if self.app_ref.state.current_peer == MAILBOX_ID:
+            enabled = False
         self.enabled = enabled
         try:
             self.input.disabled = not enabled
@@ -708,12 +925,16 @@ class InputBar(Static):
                 and self.app_ref.manager.psk_local
                 and self.app_ref.manager.psk_peer
             ):
-                self.input.placeholder = "Connected, but PSK mismatch (messages dropped)"
+                self.input.placeholder = (
+                    "Connected, but PSK mismatch (messages dropped)"
+                )
             else:
                 self.input.placeholder = "Type message... (Enter to send)"
 
         else:
-            if not self.app_ref.manager.has_selected_peer():
+            if self.app_ref.state.current_peer == MAILBOX_ID:
+                self.input.placeholder = "Incoming-only. Pick a peer to reply"
+            elif not self.app_ref.manager.has_selected_peer():
                 self.input.placeholder = "Select a peer to start chatting"
             elif not self.app_ref.manager.central_ready:
                 self.input.placeholder = "Waiting for connection..."
@@ -733,6 +954,14 @@ class InputBar(Static):
             self.input.value = ""
             return
 
+        if self.app_ref.state.current_peer == MAILBOX_ID:
+            # Double guard (should have been disabled already)
+            self.app_ref.state.add_msg(
+                MAILBOX_ID, Message(datetime.now(), "sys", "mailbox is incoming-only")
+            )
+            self.app_ref.refresh_all()
+            self.input.value = ""
+            return
         pid = self.app_ref.state.current_peer or "peer"
         self.app_ref.state.add_msg(pid, Message(datetime.now(), "out", text))
         self.app_ref.refresh_all()
@@ -757,6 +986,9 @@ class BitChat(App):
     #left { width: 28; border: round $accent; }
     #center { border: round $accent; }
     #chat-content { height: 1fr; overflow: auto; }
+    #peers-list { height: 1fr; }
+    #peers-list > ListItem { height: 1; }
+    #peers-title { height: 1; }
     """
     # Disable built-in command palette/search (keep only quit)
     BINDINGS = [
