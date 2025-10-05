@@ -8,7 +8,7 @@
 
 ## 2. Feature description
 
-### Architecture (layers)
+### 2.1 Architecture (layers)
 
 * Transport: LoopbackTransport (in-process, same-thread callback). BlueZ GATT on Linux for real BLE.
 * Proto: 12-byte fragment header + fragmenter/reassembler (payload <= 100 B/fragment).
@@ -16,7 +16,7 @@
 * App: ChatService — plaintext -> AEAD -> fragment -> transport; reverse on RX.
 * Ctl: Minimal AF_UNIX IPC line protocol between CLI and daemon.
 
-### Fixed constants
+### 2.2 Fixed constants
 
 * Service UUID: 7e0f8f20-cc0b-4c6e-8a3e-5d21b2f8a9c4
 * TX (Notify): 7e0f8f21-cc0b-4c6e-8a3e-5d21b2f8a9c4
@@ -25,18 +25,18 @@
   * **Advertising**: includes the BitChat Service UUID only. We do **not** advertise user identity or hashed tags.
   * `LocalName` MAY be a generic string (e.g., `BitChat`) and SHOULD NOT leak the full `user_id`.
 
-### Roles
+### 2.3 Roles
 
 * Fixed central <-> peripheral; no dual-role negotiation.
 
-### Identity & Discovery (human-readable IDs)
+### 2.4 Identity & Discovery (human-readable IDs)
 
 * **Goal**: Let users see a human ID (e.g., `userAA`) in the config rather than raw BLE addresses.
 * **Discovery**: Central scans for the BitChat Service UUID and selects a device (based on UI/operator choice).
 * **HELLO after connect**: After a link is established, the peer sends a control-plane **HELLO** packet that carries its self‑chosen `user_id` (and capability bits). The UI updates the display name accordingly. No identity is embedded in advertisements.
 * **Fallback**: If HELLO is not yet received, the UI shows the MAC address of the peer.
 
-### Fragment header (12 bytes, big-endian)
+### 2.5 Fragment header (12 bytes, big-endian)
 
 ```txt
 |-------|---------|----------|-------|---------|-------|
@@ -124,3 +124,88 @@ bitchatctl quit
 * No ACK/NAK/retransmit layer.
 * No safety numbers/verification, group/mesh, etc.
 * No platform-specific MTU tuning in upper layers (fragmenter owns sizing).
+
+## 5. Workflow Example: A connects to B and sends a message
+
+```
++----------------+                      +-------------------+
+|       A        |                      |       B           |
+| (Central Role) |                      | (Peripheral Role) |
++----------------+                      +-------------------+
+       |                                      |
+       |       1. BLE Scan                    |
+       |------------------------------------->|
+       |                                      |
+       |       2. Advertise BitChat Service   |
+       |<-------------------------------------|
+       |                                      |
+       |       3. Connect to Peripheral       |
+       |------------------------------------->|
+       |                                      |
+       |       4. Discover GATT Services      |
+       |------------------------------------->|
+       |                                      |
+       |       5. Enable Notifications (TX)   |
+       |------------------------------------->|
+       |                                      |
+       |       6. Send "HELLO" Control Msg    |
+       |------------------------------------->|
+       |                                      |
+       |       7. Receive "HELLO" Reply       |
+       |<-------------------------------------|
+       |                                      |
+       |    **Connection Established**        |
+       |                                      |
+       |  8. Send Encrypted Message Payload   |
+       |------------------------------------->|
+       |                                      |
+       |  9. Peripheral Notifies Data (TX)    |
+       |<-------------------------------------|
+       |                                      |
+       |       **Message Delivered!**         |
+       |                                      |
+```
+
+## 6. Man-in-the-Middle (MITM) Attack Scenario: PSK Mismatch
+
+In the event of a man-in-the-middle (MITM) attack where the pre-shared key (PSK) between A and B does not match, the following occurs:
+
+```
++----------------+                      +----------------+
+|       A        |                      |   MITM Device  |
+| (Central Role) |                      | (Impersonator) |
++----------------+                      +----------------+
+       |                                      |
+       |       1. BLE Scan                    |
+       |------------------------------------->|
+       |       2. Advertise Fake Service      |
+       |<-------------------------------------|
+       |                                      |
+       |       3. Connect to Fake Peripheral  |
+       |------------------------------------->|
+       |                                      |
+       |       4. Discover GATT Services      |
+       |------------------------------------->|
+       |                                      |
+       |       5. Enable Notifications (TX)   |
+       |------------------------------------->|
+       |                                      |
+       |       6. Send "HELLO" Control Msg    |
+       |------------------------------------->|
+       |                                      |
+       |       7. HELLO Reply (Fake ID)       |
+       |<-------------------------------------|
+       |                                      |
+       |    **Connection Established**        |
+       |                                      |
+       |  8. Send Encrypted Message Payload   |
+       |------------------------------------->|
+       |  9. Decryption Fails (PSK Mismatch)  |
+       |------------------------------------->|
+       |                                      |
+       |  **Message Not Delivered!**          |
+       |                                      |
+```
+
+### Notes on MITM Prevention:
+- The mismatch in PSK causes decryption to fail, ensuring the integrity and confidentiality of messages.
