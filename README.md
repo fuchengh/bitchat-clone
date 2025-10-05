@@ -12,6 +12,17 @@ Minimal BLE 1:1 end-to-end encrypted messenger
 
 ---
 
+## Demo
+
+1. 1-to-1 messaging
+<video src="https://github.com/user-attachments/assets/0a428946-08bd-4923-b568-e4164c54a4bc" height="480"/>
+
+2. 1-to-many messaging
+<video src="https://github.com/user-attachments/assets/1aec2156-03a2-4c0d-af59-d1beeeb13da5" height="480"/>
+
+3. Man-in-the-middle attack (drop message if PSK conflicts)
+<video src="https://github.com/user-attachments/assets/5a4962ae-b145-4f5f-9a19-4badabb6474b" height="480"/>
+
 ## Design doc
 
 For design rationale and detailed architecture, please refer to [doc/design_doc.md](https://github.com/fuchengh/bitchat-clone/doc/design_doc.md).
