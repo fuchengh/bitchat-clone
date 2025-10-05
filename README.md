@@ -23,7 +23,7 @@ Minimal BLE 1:1 end-to-end encrypted messenger
 
 ## Design doc
 
-For design rationale and detailed architecture, please refer to [doc/design_doc.md](https://github.com/fuchengh/bitchat-clone/doc/design_doc.md).
+For design rationale and detailed architecture, please refer to [doc/design_doc.md](doc/design_doc.md).
 
 
 ## Dependencies (Ubuntu/Debian)
