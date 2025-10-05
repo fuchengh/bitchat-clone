@@ -21,43 +21,6 @@ Minimal BLE 1:1 end-to-end encrypted messenger
 3. Man-in-the-middle attack - messages **will be dropped** if PSK are not the same
 <video src="https://github.com/user-attachments/assets/5a4962ae-b145-4f5f-9a19-4badabb6474b" width="320" height="240" control></video>
 
-## Design doc
-
-For design rationale and detailed architecture, please refer to [doc/design_doc.md](doc/design_doc.md).
-
-
-## Dependencies (Ubuntu/Debian)
-
-For build dependencies:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential cmake pkg-config \
-  libsystemd-dev \
-  bluez
-```
-
-- libsodium: requires latest version (1.0.20)
-  - Installation guide [https://doc.libsodium.org/installation](https://doc.libsodium.org/installation)
-
-Python (for TUI):
-
-```bash
-pip install --upgrade pip
-pip install textual rich
-```
-
-## Build
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-cmake --build build -j
-```
-
-- BlueZ transport is enabled automatically when `libsystemd-dev` is present.
-- Binary executables in `build/bin/`
-
 ## What runs
 
 - TUI (chat app, also spawns central & peripheral): `tui_bitchat.py`
@@ -67,6 +30,10 @@ cmake --build build -j
 Default control socket (when started manually): `~/.cache/bitchat-clone/ctl.sock`
 > [!NOTE]
 > TUI uses role-specific sockets:  `~/.cache/bitchat-clone/[central|peripheral].sock`
+
+## Design doc
+
+For design rationale and detailed architecture, please refer to [doc/design_doc.md](doc/design_doc.md).
 
 ## Quickstart (recommended):
 
@@ -116,7 +83,7 @@ Terminal B - start peripheral role:
 BITCHAT_ROLE=peripheral BITCHAT_TRANSPORT=bluez BITCHAT_CTL_SOCK=/tmp/bitchat-peripheral.sock ./build/bin/bitchatd
 ```
 
-Terminal C — talk to central (B) daemon via socket:
+Terminal C — talk to central (terminal A) daemon via socket:
 
 ```bash
 ./build/bin/bitchatctl --sock /tmp/bitchat-central.sock tail on
@@ -137,6 +104,39 @@ Commands:
   disconnet                  # disconnect from current peer (central only)
   quit                       # ask daemon to exit
 ```
+
+## Dependencies (Ubuntu/Debian)
+
+For build dependencies:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential cmake pkg-config \
+  libsystemd-dev \
+  bluez
+```
+
+- libsodium: requires latest version (1.0.20)
+  - Installation guide [https://doc.libsodium.org/installation](https://doc.libsodium.org/installation)
+
+Python (for TUI):
+
+```bash
+pip install --upgrade pip
+pip install textual rich
+```
+
+## Build
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build build -j
+```
+
+- BlueZ transport is enabled automatically when `libsystemd-dev` is present.
+- Binary executables in `build/bin/`
+
 
 ## Security (AEAD)
 
