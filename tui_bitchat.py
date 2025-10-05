@@ -449,9 +449,7 @@ class DaemonManager:
                 # If we are also connected to a peer, mirror the message there too
                 if self.central_ready and self.active_mac:
                     # Prefer mailbox_sender (user id learned from HELLO) as the sender label
-                    # and persist it into the namebook for this MAC.
-                    if self.mailbox_sender:
-                        self.namebook[self.active_mac] = self.mailbox_sender
+                    # but don't update namebook here
                     current_disp = self.state.peers.get(
                         self.active_mac, Peer(self.active_mac, self.active_mac)
                     ).display
@@ -463,7 +461,6 @@ class DaemonManager:
                     disp = self.namebook.get(self.active_mac, current_disp)
                     if disp != current_disp:
                         self.state.upsert_peer(self.active_mac, display=disp)
-                        self.hello_seen.add(self.active_mac)
                     self.state.add_msg(
                         self.active_mac,
                         Message(datetime.now(), "in", text, sender=peer_sender),
@@ -519,10 +516,6 @@ class DaemonManager:
             mac = self.state.current_peer
             if mac and mac in self.state.peers:
                 self.state.peers[mac].is_connected = True
-                # If we already learned user id from mailbox before central became ready,
-                # apply it and persist in namebook so peers list/chat shows the name.
-                if self.mailbox_sender:
-                    self.namebook[mac] = self.mailbox_sender
                 disp = self.namebook.get(mac, self.state.peers[mac].display)
                 if disp != self.state.peers[mac].display:
                     self.state.upsert_peer(mac, display=disp)
@@ -534,8 +527,6 @@ class DaemonManager:
                             f"(hello) peer {mac}'s id is '{disp}'",
                         ),
                     )
-                    self.hello_seen.add(mac)
-                self.hello_seen.add(mac)
             self.state.add_msg(
                 mac or "peer",
                 Message(datetime.now(), "sys", "ready - notifications enabled"),
