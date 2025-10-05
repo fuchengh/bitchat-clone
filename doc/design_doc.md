@@ -4,8 +4,7 @@
 
 * Goal: Ship a demo-able one-to-one nearby messenger with end-to-end encryption over BLE (Linux + BlueZ).
 * Scope (MVP): Single link; two GATT characteristics (TX=Notify, RX=Write with response); app-level fragmentation (~100 B payload/fragment); **PSK AEAD (XChaCha20-Poly1305)**; minimal IPC/CLI for control; **human-readable ID discovery** (via BLE ServiceData tag).
-* Non-goals (for now): ACK/NAK/retransmit, safety numbers/QR, group/mesh, automatic key exchange, role contention.
-* Future/Optional: **Single-hop relay (blind forwarder)**, TUI client over IPC, public-key identity & authenticated handshake, PFS.
+* Non-goals: ACK/NAK/retransmit, safety numbers/QR, group/mesh, automatic key exchange, role contention.
 
 ## 2. Feature description
 
@@ -131,12 +130,11 @@ bitchatctl quit
 * On connect, peer proves possession of pubkey via signed transcript over the HKDF nonce exchange.
 * PSK becomes optional/legacy; XChaCha framing unchanged.
 
-### 4.7 Relay (single-hop, blind forwarder — optional)
+### 4.7 Mailbox & 1‑to‑many messaging
 
-* Node B maintains two links (central to A, peripheral to C) and forwards fragments without decryption.
-* Use `HAS_ROUTE_PREFIX` and prepend 8-byte cleartext DST_TAG to each fragment payload; DST_TAG is in AAD.
-* B keeps a small `{ID_TAG -> link}` cache; on RX, forward to the matching link, else drop/TTL queue.
-* True mesh/multi-hop remains out of scope.
+* 1‑to‑many messaging is achieved by iterating over connected peers and sending the same message to each via the existing TX/RX characteristics.
+* Each peer maintains its own fragmenter/reassembler state, messages are not interleaved.
+* There is no mesh or multi‑hop routing. Messages are only delivered over direct BLE connections. Future work may explore richer routing schemes.
 
 ### 4.8 Explicit non-features (by design)
 

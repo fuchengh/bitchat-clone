@@ -59,11 +59,13 @@ Default control socket (when started manually): `~/.cache/bitchat-clone/ctl.sock
 > [!NOTE]
 > Ensure `bluetoothd` is running on your system.
 
-1. Download binaries from [Releases](https://github.com/fuchengh/bitchat-clone/releases)
-2. (Optional) Configure `config` file (copied from `.env`)
-3. Start bitchat with launcher: `./bitchat.sh`
+1. Download the latest release archive from [Releases](https://github.com/fuchengh/bitchat-clone/releases) (this contains prebuilt binaries and scripts).
+2. (Optional) Adjust settings in `config` file as needed. (`config` is copied from `.env`)
+3. Start BitChat via the launcher script: `./bitchat.sh`, this will run the central and peripheral daemons and enable 1‑to‑many messaging with TUI.
+4. Use the TUI or CLI to send messages
 
-Config: please refer to `.env` file.
+> [!NOTE]
+> Config: please refer to `.env` file.
 
 TUI:
 - Left panel = discovered peers.
@@ -102,7 +104,7 @@ BITCHAT_CTL_SOCK=/tmp/bitchat-central.sock \
 ./build/bin/bitchatd
 ```
 
-Terminal C — talk to central daemon:
+Terminal C — talk to central daemon via socket:
 
 ```bash
 ./build/bin/bitchatctl --sock /tmp/bitchat-central.sock tail on
@@ -116,9 +118,12 @@ CLI Usage
 bitchatctl [--sock <path>] <command> [args]
 
 Commands:
-  send <text...>   # send one line of text
-  tail on|off      # toggle printing of received messages in daemon logs
-  quit             # ask daemon to exit
+  send <text...>             # send one line of text
+  tail on|off                # toggle printing of received messages in daemon logs
+  peers                      # list known peers
+  connect AA:BB:CC:DD:EE:FF  # connect to peer (central only)
+  disconnet                  # disconnect from current peer (central only)
+  quit                       # ask daemon to exit
 ```
 
 ## Security (AEAD)
@@ -128,7 +133,7 @@ By default the daemon uses a **Noop AEAD** (plaintext)
 Enable `XChaCha20-Poly1305` with a 32-byte PSK:
 
 ```bash
-export BITCHAT_PSK="$(openssl rand -hex 32)"
+export BITCHAT_PSK="$(openssl rand -hex 32)" # or in config file
 ./build/bin/bitchatd
 ```
 
@@ -140,41 +145,6 @@ export BITCHAT_PSK="$(openssl rand -hex 32)"
 > Without `BITCHAT_PSK`, traffic is **NOT** encrypted
 > 
 > If PSK mismatched on local/peer, all messages will be dropped
-
-## Expected daemon log snippets (with BlueZ enabled)
-
-Central:
-
-```bash
-[INFO]  [BLUEZ][central] StartDiscovery OK on /org/bluez/hci0
-[DEBUG] [BLUEZ][central] found /org/bluez/hci0/dev_XX addr=AA:BB:CC:DD:EE:FF (svc hit)
-[INFO]  [BLUEZ][central] Device connected: /org/bluez/hci0/dev_...
-[INFO]  [BLUEZ][central] Notifications enabled on .../char...
-[DEBUG] [BLUEZ][central] Notifications enabled; ready
-```
-
-Peripheral:
-
-```bash
-[DEBUG] [BLUEZ] tx.StartNotify
-[DEBUG] [BLUEZ] rx.WriteValue len=...
-[INFO]  [RECV] hello world
-```
-
-## Design sketch
-
-```text
-bitchatctl
-   │  (AF_UNIX line-based IPC)
-   ▼
-bitchatd on_line()
-   │
-   ▼
-ChatService
-   ├─ AEAD.seal/open (XChaCha20-Poly1305)
-   ├─ frag.make_chunks / reassembler (12-byte header)
-   └─ transport (BlueZ)
-```
 
 ## Tests
 
