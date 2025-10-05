@@ -2,8 +2,8 @@
 
 ## 1. Introduction
 
-* Goal: Ship a demo-able one-to-one nearby messenger with end-to-end encryption over BLE (Linux + BlueZ).
-* Scope (MVP): Single link; two GATT characteristics (TX=Notify, RX=Write with response); app-level fragmentation (~100 B payload/fragment); **PSK AEAD (XChaCha20-Poly1305)**; minimal IPC/CLI for control; **human-readable ID discovery** (via BLE ServiceData tag).
+* Goal: Ship a nearby messenger with end-to-end encryption over BLE (Linux + BlueZ).
+* Scope (MVP): Single link; two GATT characteristics (TX=Notify, RX=Write with response); app-level fragmentation (~100 B payload/fragment); **PSK AEAD with XChaCha20‑Poly1305 (current)**; minimal IPC/CLI for control; **human-readable ID shown via HELLO after connect**.
 * Non-goals: ACK/NAK/retransmit, safety numbers/QR, group/mesh, automatic key exchange, role contention.
 
 ## 2. Feature description
@@ -12,7 +12,7 @@
 
 * Transport: LoopbackTransport (in-process, same-thread callback). BlueZ GATT on Linux for real BLE.
 * Proto: 12-byte fragment header + fragmenter/reassembler (payload <= 100 B/fragment).
-* Crypto: **PskAead interface using XChaCha20-Poly1305** (stream-safe nonce). HKDF-based session keys derived per connection.
+* Crypto: **PskAead using XChaCha20‑Poly1305** (stream-safe nonce). HKDF-based session keys derived per connection.
 * App: ChatService — plaintext -> AEAD -> fragment -> transport; reverse on RX.
 * Ctl: Minimal AF_UNIX IPC line protocol between CLI and daemon.
 
@@ -22,10 +22,8 @@
 * TX (Notify): 7e0f8f21-cc0b-4c6e-8a3e-5d21b2f8a9c4
 * RX (Write w/ response): 7e0f8f22-cc0b-4c6e-8a3e-5d21b2f8a9c4
 * Default app payload per fragment: 100 B
-  * **Discovery ID tag (advertising)**: 8 bytes, `ID_TAG = Truncate_8( SHA-256( UTF8(user_id) ) )`
-  * Advertised in **LEAdvertisement1.ServiceData** as a map entry `{ <Service UUID> : ay(ID_TAG) }`.
-  * Security note: ID_TAG is **not** secret. It enables human-readable addressing only. Anti-spoof requires public-key identities (see §4.6).
-
+  * **Advertising**: includes the BitChat Service UUID only. We do **not** advertise user identity or hashed tags.
+  * `LocalName` MAY be a generic string (e.g., `BitChat`) and SHOULD NOT leak the full `user_id`.
 
 ### Roles
 
@@ -33,23 +31,19 @@
 
 ### Identity & Discovery (human-readable IDs)
 
-* **Goal**: Let users connect by a human ID (e.g., `userAA`) instead of raw BLE addresses or object paths.
-* **Advertising**:
-  * `ServiceUUIDs` includes the BitChat service UUID.
-  * `ServiceData` MUST include `{ <Service UUID> : ID_TAG(8B) }` as above.
-  * `LocalName` MAY be a generic string (e.g., `BitChat`) and SHOULD NOT leak the full `user_id`.
-+* **Resolution**:
-  * Central scans for the service UUID; if an operator/UI specifies a `user_id`, the daemon computes its `ID_TAG` and matches against `ServiceData` to pick the device.
-  * Optionally, after connect, an **Identity characteristic** (read-only string `user_id`) MAY be added later
+* **Goal**: Let users see a human ID (e.g., `userAA`) in the config rather than raw BLE addresses.
+* **Discovery**: Central scans for the BitChat Service UUID and selects a device (based on UI/operator choice).
+* **HELLO after connect**: After a link is established, the peer sends a control-plane **HELLO** packet that carries its self‑chosen `user_id` (and capability bits). The UI updates the display name accordingly. No identity is embedded in advertisements.
+* **Fallback**: If HELLO is not yet received, the UI shows the MAC address of the peer.
 
 ### Fragment header (12 bytes, big-endian)
 
 ```txt
 |-------|---------|----------|-------|---------|-------|
-|  1 B  |    1 B  |   4 B    |  2 B  |   2 B   |  2 B  |
-|-------|---------|----------|-------|---------|-------|
-| ver:1 | flags:1 | msg_id:4 | seq:2 | total:2 | len:2 |
-|-------|---------|----------|-------|---------|-------|
+| 1 B     | 1 B       | 4 B        | 2 B     | 2 B       | 2 B     |
+| ------- | --------- | ---------- | ------- | --------- | ------- |
+| ver:1   | flags:1   | msg_id:4   | seq:2   | total:2   | len:2   |
+| ------- | --------- | ---------- | ------- | --------- | ------- |
 ```
 
 * msg_id groups fragments into a message.
@@ -105,10 +99,10 @@ bitchatctl quit
   * `len`: exact bytes of payload in this fragment (last chunk is shorter).
 * Reassembly rules: Buffer by (sender, msg_id); accept out-of-order; deliver only when all seq in [0,total) arrive. Evict incomplete messages after a timeout to cap memory.
 
-### 4.3 Crypto boundary (PSK AEAD; XChaCha20-Poly1305 later)
+### 4.3 Crypto boundary (PSK AEAD; XChaCha20‑Poly1305)
 
-* What we do: A small PskAead interface sits between app and proto. Migrating to XChaCha20-Poly1305 requires no changes to transport/proto.
-* We fragment ciphertext+tag across chunks; every fragment carries its header and uses identical AAD derivation, so the receiver rejects mismatched or replayed pieces.
+* We use **XChaCha20‑Poly1305** with a 32‑byte PSK. Transport/proto layers are unchanged by the choice of AEAD.
+* We fragment ciphertext+tag across chunks. Every fragment carries its header and uses identical AAD derivation, so the receiver rejects mismatched or replayed pieces.
 
 ### 4.4 Fixed roles (central/peripheral)
 
@@ -116,29 +110,17 @@ bitchatctl quit
 
 ### 4.5 Human-readable identity (discovery)
 
-* Each device has a `user_id` (e.g., alice).
-* Advertising includes `ServiceUUIDs` (BitChat UUID) and a non-secret 8-byte `ID_TAG` in ServiceData:
-* `ID_TAG` = `Truncate_8( SHA-256( UTF8(user_id) ) )`
-* Central that’s given user_id computes ID_TAG and matches during scan.
-* LocalName stays generic (e.g., BitChat) to avoid leaking full user_id.
+* Identity is **self‑chosen** by the user and transported via **HELLO** after connect.
 
-> Note: ID_TAG is not authentication. Preventing spoofing requires public-key identities (see §4.6).
-
-### 4.6 Identity hardening (future)
-
-* Make the displayed ID a Bech32 of Hash(static_public_key).
-* On connect, peer proves possession of pubkey via signed transcript over the HKDF nonce exchange.
-* PSK becomes optional/legacy; XChaCha framing unchanged.
-
-### 4.7 Mailbox & 1‑to‑many messaging
+### 4.6 Mailbox & 1‑to‑many messaging
 
 * 1‑to‑many messaging is achieved by iterating over connected peers and sending the same message to each via the existing TX/RX characteristics.
-* Each peer maintains its own fragmenter/reassembler state, messages are not interleaved.
-* There is no mesh or multi‑hop routing. Messages are only delivered over direct BLE connections. Future work may explore richer routing schemes.
+* All **incoming** messages are also written to the **Mailbox**. If a peer is connected, the same message **appears both in the chat window and in the Mailbox**.
+* Each peer maintains its own fragmenter/reassembler state; messages are not interleaved.
+* There is no mesh or multi‑hop routing. Messages are only delivered over direct BLE connections.
 
-### 4.8 Explicit non-features (by design)
+### 4.7 Explicit non-features (by design)
 
 * No ACK/NAK/retransmit layer.
-* No storage/outbox, safety numbers/verification, group/mesh, etc.
+* No safety numbers/verification, group/mesh, etc.
 * No platform-specific MTU tuning in upper layers (fragmenter owns sizing).
-

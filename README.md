@@ -12,6 +12,11 @@ Minimal BLE 1:1 end-to-end encrypted messenger
 
 ---
 
+## Design doc
+
+For design rationale and detailed architecture, please refer to [doc/design_doc.md](https://github.com/fuchengh/bitchat-clone/doc/design_doc.md).
+
+
 ## Dependencies (Ubuntu/Debian)
 
 For build dependencies:
@@ -88,23 +93,21 @@ python ./tui_bitchat.py
 
 ### Manual daemon + CLI
 
-Terminal A - start peripheral role:
+- Example: Sending from **Central A** to **Peripheral B**
+
+Terminal A — start central role:
 
 ```bash
-BITCHAT_ROLE=peripheral BITCHAT_TRANSPORT=bluez \
-BITCHAT_CTL_SOCK=/tmp/bitchat-peripheral.sock \
-./build/bin/bitchatd
+BITCHAT_ROLE=central BITCHAT_TRANSPORT=bluez BITCHAT_CTL_SOCK=/tmp/bitchat-central.sock ./build/bin/bitchatd
 ```
 
-Terminal B — start central role:
+Terminal B - start peripheral role:
 
 ```bash
-BITCHAT_ROLE=central BITCHAT_TRANSPORT=bluez \
-BITCHAT_CTL_SOCK=/tmp/bitchat-central.sock \
-./build/bin/bitchatd
+BITCHAT_ROLE=peripheral BITCHAT_TRANSPORT=bluez BITCHAT_CTL_SOCK=/tmp/bitchat-peripheral.sock ./build/bin/bitchatd
 ```
 
-Terminal C — talk to central daemon via socket:
+Terminal C — talk to central (B) daemon via socket:
 
 ```bash
 ./build/bin/bitchatctl --sock /tmp/bitchat-central.sock tail on
