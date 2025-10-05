@@ -151,6 +151,7 @@ bool BluezTransport::start_peripheral()
         return false;
     }
     impl_->adapter_path = "/org/bluez/" + cfg_.adapter;
+    LOG_INFO("[BLUEZ][peripheral] using adapter=%s", cfg_.adapter.c_str());
     // not needed, but get a unique name for debugging
     const char *uniq_name = nullptr;
     if (sd_bus_get_unique_name(impl_->bus, &uniq_name) >= 0 && uniq_name)

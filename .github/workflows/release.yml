@@ -192,11 +192,15 @@ jobs:
             fi
           fi
           VPY="${VENV_DIR}/bin/python"; PIP="${VENV_DIR}/bin/pip"
+          # make sure venv has pip, otherwise run ensuirepip
+          if ! "$VPY" -m pip --version >/dev/null 2>&1; then
+            "$VPY" -m ensurepip --upgrade >/dev/null
+          fi
           "$VPY" -m pip install --upgrade pip wheel >/dev/null
           if [ -d "$WHEELS_DIR" ] && ls "$WHEELS_DIR"/*.whl >/dev/null 2>&1; then
-            "$PIP" install --no-index --find-links "$WHEELS_DIR" textual >/dev/null
+            "$VPY" -m pip install --no-index --find-links "$WHEELS_DIR" textual >/dev/null
           else
-            "$PIP" install textual >/dev/null
+            "$VPY" -m pip install textual >/dev/null
           fi
           exec "$VPY" "${ROOT}/tui/tui_bitchat.py"
           SH

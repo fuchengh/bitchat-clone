@@ -34,6 +34,7 @@
  *    └─ Callbacks from the bus thread deliver RX frames via on_frame
  * ====================================================================== */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -54,6 +55,7 @@
 
 #if BITCHAT_HAVE_SDBUS
 #include <systemd/sd-bus.h>
+#include "transport/bluez_dbus_util.hpp"
 #endif
 namespace transport
 {
@@ -103,6 +105,10 @@ const std::string &BluezTransport::dev_path() const noexcept
 const std::string &BluezTransport::unique_name() const noexcept
 {
     return impl_->unique_name;
+}
+const std::string &BluezTransport::adapter_path() const noexcept
+{
+    return impl_->adapter_path;
 }
 bool BluezTransport::tx_notifying() const noexcept
 {
@@ -282,6 +288,97 @@ bool BluezTransport::link_ready() const
     // Peripheral: ready when notifications are on (identical to pre-refactor behavior)
     // WARNING: the 'notifying' flag is toggled only from the bus thread via Start/StopNotify.
     return impl_->notifying.load();
+}
+
+// ======================================================================
+// Function: BluezTransport::note_candidate
+// - In: addr in AA:BB:CC:DD:EE:FF format, rssi (0 if unknown)
+// - Out: updates or adds candidate to impl_->candidates
+// ======================================================================
+void BluezTransport::note_candidate(const std::string &addr, int16_t rssi)
+{
+#if !BITCHAT_HAVE_SDBUS
+    (void)addr;
+    (void)rssi;
+    return;
+#else
+    if (!impl_)
+        return;
+    using namespace std::chrono;
+    const uint64_t now_ms =
+        (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    auto &m  = impl_->candidates;
+    auto  it = m.find(addr);
+    if (it == m.end())
+    {
+        impl_->candidates.emplace(addr, Impl::Candidate{addr, rssi, now_ms});
+    }
+    else
+    {
+        it->second.rssi         = rssi;
+        it->second.last_seen_ms = now_ms;
+    }
+#endif
+}
+
+// ======================================================================
+// Function: list_peers
+// - In: none
+// - Out: Make sure discovery=on, call ObjectManager.GetManagedObjects, return <MAC,RSSI> list
+// - Note: Will not StopDiscovery
+// ======================================================================
+std::vector<PeerInfo> BluezTransport::list_peers()
+{
+#if !BITCHAT_HAVE_SDBUS
+    return {};
+#else
+    std::vector<PeerInfo> out;
+    if (!impl_ || !impl_->bus)
+        return out;
+
+    using namespace std::chrono;
+    const uint64_t now_ms =
+        (uint64_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    const uint64_t TTL_MS       = 120000;  // 120s
+    bool           need_refresh = false;
+
+    {
+        std::lock_guard<std::mutex> lk(impl_->bus_mu);
+        if (impl_->candidates.empty() ||
+            now_ms - impl_->last_refresh_ms > impl_->refresh_min_interval_ms)
+        {
+            need_refresh = true;
+        }
+        for (const auto &kv : impl_->candidates)
+        {
+            const auto &c = kv.second;
+            if (now_ms - c.last_seen_ms <= TTL_MS)
+            {
+                out.push_back(PeerInfo{c.addr, c.rssi});
+            }
+        }
+    }
+    if (need_refresh && impl_->bus)
+    {
+        impl_->refresh_req.store(true, std::memory_order_release);
+    }
+
+    std::sort(out.begin(), out.end(),
+              [](const PeerInfo &a, const PeerInfo &b) { return a.rssi > b.rssi; });
+    return out;
+
+#endif
+}
+
+void BluezTransport::request_candidate_refresh()
+{
+#if !BITCHAT_HAVE_SDBUS
+    return;
+#else
+    if (!impl_)
+        return;
+    impl_->refresh_req.store(true, std::memory_order_release);
+#endif
 }
 
 }  // namespace transport
